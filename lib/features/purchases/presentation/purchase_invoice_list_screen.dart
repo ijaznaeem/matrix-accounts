@@ -1,12 +1,14 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:intl/intl.dart';
+import 'package:printing/printing.dart';
 
 import '../../../core/config/providers.dart';
 import '../../../core/widgets/navigation_drawer_helper.dart';
 import '../../../data/models/invoice_stock_models.dart';
 import '../../../data/models/party_model.dart';
 import '../services/purchase_invoice_service.dart';
+import '../services/purchase_invoice_generator.dart';
 import 'purchase_invoice_form_screen.dart';
 
 class PurchaseInvoiceListScreen extends ConsumerStatefulWidget {
@@ -83,6 +85,130 @@ class _PurchaseInvoiceListScreenState
     }
   }
 
+  Future<void> _printInvoice(Invoice invoice) async {
+    try {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Generating PDF for printing...')),
+      );
+
+      final isar = ref.read(isarServiceProvider).isar;
+      final service = PurchaseInvoiceService(isar);
+      final company = ref.read(currentCompanyProvider);
+
+      if (company == null) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('No company selected')),
+        );
+        return;
+      }
+
+      // Get required data
+      final supplier = await service.getPartyForInvoice(invoice.partyId);
+      final transaction = await service.getTransactionForInvoice(invoice.id);
+
+      if (supplier == null || transaction == null) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Could not load invoice data')),
+        );
+        return;
+      }
+
+      // Get transaction lines
+      final transactionLines =
+          await service.getTransactionLines(transaction.id);
+      final lineItems = transactionLines
+          .map((line) => {
+                'productName': line.description ?? 'Unknown Product',
+                'quantity': line.quantity,
+                'rate': line.unitPrice,
+                'amount': line.quantity * line.unitPrice,
+              })
+          .toList();
+
+      // Generate PDF
+      final pdfBytes =
+          await PurchaseInvoiceGenerator.generatePurchaseInvoicePdf(
+        company: company,
+        supplier: supplier,
+        invoice: invoice,
+        transaction: transaction,
+        lineItems: lineItems,
+      );
+
+      // Print PDF
+      await Printing.layoutPdf(
+        onLayout: (format) async => pdfBytes,
+        name: 'purchase_invoice_${transaction.referenceNo}.pdf',
+      );
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Error printing invoice: $e'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    }
+  }
+
+  Future<void> _shareInvoice(Invoice invoice) async {
+    try {
+      final isar = ref.read(isarServiceProvider).isar;
+      final service = PurchaseInvoiceService(isar);
+      final company = ref.read(currentCompanyProvider);
+
+      if (company == null) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('No company selected')),
+        );
+        return;
+      }
+
+      // Get required data
+      final supplier = await service.getPartyForInvoice(invoice.partyId);
+      final transaction = await service.getTransactionForInvoice(invoice.id);
+
+      if (supplier == null || transaction == null) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Could not load invoice data')),
+        );
+        return;
+      }
+
+      // Get transaction lines
+      final transactionLines =
+          await service.getTransactionLines(transaction.id);
+      final lineItems = transactionLines
+          .map((line) => {
+                'productName': line.description ?? 'Unknown Product',
+                'quantity': line.quantity,
+                'rate': line.unitPrice,
+                'amount': line.quantity * line.unitPrice,
+              })
+          .toList();
+
+      // Show share options
+      await PurchaseInvoiceGenerator.sharePurchaseInvoice(
+        context: context,
+        company: company,
+        supplier: supplier,
+        invoice: invoice,
+        transaction: transaction,
+        lineItems: lineItems,
+      );
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Error sharing invoice: $e'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
@@ -108,56 +234,111 @@ class _PurchaseInvoiceListScreenState
         selectedItem: 'purchases',
       ),
       appBar: AppBar(
-        title: const Text('Purchase Invoices'),
+        title: const Text('Purchase List'),
         elevation: 0,
-        backgroundColor: Colors.orange,
-        actions: [
-          IconButton(
-            icon: const Icon(Icons.add),
-            onPressed: () async {
-              final result = await Navigator.push(
-                context,
-                MaterialPageRoute(
-                  builder: (_) => const PurchaseInvoiceFormScreen(),
-                ),
-              );
-              if (result == true && mounted) {
-                setState(() {}); // Refresh list
-              }
-            },
-            tooltip: 'Add Purchase Invoice',
-          ),
-        ],
+        backgroundColor: Colors.blueAccent,
       ),
       body: Column(
         children: [
-          // Search Bar
+          // Search Bar and Total Purchase Amount (Side by Side)
           Container(
             padding: const EdgeInsets.all(16),
             color: colorScheme.surface,
-            child: TextField(
-              controller: _searchController,
-              decoration: InputDecoration(
-                hintText: 'Search invoices...',
-                prefixIcon: const Icon(Icons.search),
-                suffixIcon: _searchQuery.isNotEmpty
-                    ? IconButton(
-                        icon: const Icon(Icons.clear),
-                        onPressed: () {
-                          _searchController.clear();
-                          setState(() => _searchQuery = '');
-                        },
-                      )
-                    : null,
-                border: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(12),
+            child: Row(
+              children: [
+                // Search Bar - Half Width
+                Expanded(
+                  flex: 1,
+                  child: TextField(
+                    controller: _searchController,
+                    decoration: InputDecoration(
+                      hintText: 'Search invoices...',
+                      prefixIcon: const Icon(Icons.search),
+                      suffixIcon: _searchQuery.isNotEmpty
+                          ? IconButton(
+                              icon: const Icon(Icons.clear),
+                              onPressed: () {
+                                _searchController.clear();
+                                setState(() => _searchQuery = '');
+                              },
+                            )
+                          : null,
+                      border: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                      filled: true,
+                      fillColor: colorScheme.surface,
+                    ),
+                    onChanged: (value) {
+                      setState(() => _searchQuery = value);
+                    },
+                  ),
                 ),
-                filled: true,
-                fillColor: colorScheme.surface,
-              ),
-              onChanged: (value) {
-                setState(() => _searchQuery = value);
-              },
+                const SizedBox(width: 12),
+                // Total Purchase Amount - Half Width
+                Expanded(
+                  flex: 1,
+                  child: FutureBuilder<List<Invoice>>(
+                    future: service.getAllPurchaseInvoices(company.id),
+                    builder: (context, snapshot) {
+                      if (snapshot.hasData) {
+                        final totalAmount = snapshot.data!.fold<double>(
+                            0.0, (sum, invoice) => sum + invoice.grandTotal);
+                        return Card(
+                          color: Colors.blue.shade50,
+                          child: Padding(
+                            padding: const EdgeInsets.all(12),
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  'Total Purchase',
+                                  style: theme.textTheme.labelMedium?.copyWith(
+                                    color: Colors.blue.shade700,
+                                  ),
+                                ),
+                                const SizedBox(height: 4),
+                                Text(
+                                  'Rs ${NumberFormat('#,##0.0').format(totalAmount)}',
+                                  style: theme.textTheme.titleMedium?.copyWith(
+                                    color: Colors.blue.shade800,
+                                    fontWeight: FontWeight.bold,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        );
+                      }
+                      return Card(
+                        color: Colors.blue.shade50,
+                        child: Padding(
+                          padding: const EdgeInsets.all(12),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                'Total Purchase',
+                                style: theme.textTheme.labelMedium?.copyWith(
+                                  color: Colors.blue.shade700,
+                                ),
+                              ),
+                              const SizedBox(height: 4),
+                              Text(
+                                'Loading...',
+                                style: theme.textTheme.titleMedium?.copyWith(
+                                  color: Colors.blue.shade800,
+                                  fontWeight: FontWeight.bold,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      );
+                    },
+                  ),
+                ),
+              ],
             ),
           ),
 
@@ -231,11 +412,14 @@ class _PurchaseInvoiceListScreenState
                 }
 
                 return ListView.builder(
-                  padding: const EdgeInsets.all(16),
+                  padding: const EdgeInsets.all(12),
                   itemCount: invoices.length,
                   itemBuilder: (context, index) {
                     final invoice = invoices[index];
-                    return _buildInvoiceCard(invoice, colorScheme, service);
+                    return Padding(
+                      padding: const EdgeInsets.only(bottom: 8),
+                      child: _buildInvoiceCard(invoice, colorScheme, service),
+                    );
                   },
                 );
               },
@@ -243,7 +427,7 @@ class _PurchaseInvoiceListScreenState
           ),
         ],
       ),
-      floatingActionButton: FloatingActionButton(
+      floatingActionButton: FloatingActionButton.extended(
         onPressed: () async {
           final result = await Navigator.push(
             context,
@@ -255,9 +439,11 @@ class _PurchaseInvoiceListScreenState
             setState(() {}); // Refresh list
           }
         },
-        backgroundColor: Colors.orange,
+        backgroundColor: Colors.blueAccent,
         tooltip: 'Add Purchase Invoice',
-        child: const Icon(Icons.add),
+        icon: const Icon(Icons.add, color: Colors.white),
+        label:
+            const Text('Add Purchase', style: TextStyle(color: Colors.white)),
       ),
     );
   }
@@ -267,218 +453,232 @@ class _PurchaseInvoiceListScreenState
     ColorScheme colorScheme,
     PurchaseInvoiceService service,
   ) {
-    return Card(
-      margin: const EdgeInsets.only(bottom: 12),
-      shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(12),
-      ),
-      child: InkWell(
-        borderRadius: BorderRadius.circular(12),
-        onTap: () async {
-          final result = await Navigator.push(
-            context,
-            MaterialPageRoute(
-              builder: (_) => PurchaseInvoiceFormScreen(invoiceId: invoice.id),
+    return Dismissible(
+        key: Key('invoice_${invoice.id}'),
+        direction: DismissDirection.startToEnd,
+        confirmDismiss: (direction) async {
+          return await showDialog<bool>(
+            context: context,
+            builder: (context) => AlertDialog(
+              title: const Text('Delete Invoice'),
+              content: Text(
+                'Are you sure you want to delete this purchase invoice?\nAmount: ${_currencyFormat.format(invoice.grandTotal)}',
+              ),
+              shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(12)),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.pop(context, false),
+                  child: const Text('Cancel'),
+                ),
+                FilledButton(
+                  onPressed: () => Navigator.pop(context, true),
+                  style: FilledButton.styleFrom(
+                    backgroundColor: Colors.red,
+                  ),
+                  child: const Text('Delete'),
+                ),
+              ],
             ),
           );
-          if (result == true && mounted) {
-            setState(() {}); // Refresh list
+        },
+        onDismissed: (direction) async {
+          try {
+            final isar = ref.read(isarServiceProvider).isar;
+            final service = PurchaseInvoiceService(isar);
+            await service.deletePurchaseInvoice(invoice.id);
+
+            if (mounted) {
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(
+                  content: Text('Purchase invoice deleted successfully'),
+                  backgroundColor: Colors.green,
+                ),
+              );
+              setState(() {}); // Refresh list
+            }
+          } catch (e) {
+            if (mounted) {
+              ScaffoldMessenger.of(context).showSnackBar(
+                SnackBar(
+                  content: Text('Error deleting invoice: $e'),
+                  backgroundColor: Colors.red,
+                ),
+              );
+              setState(() {}); // Refresh list to restore the item
+            }
           }
         },
-        child: Padding(
-          padding: const EdgeInsets.all(16),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
+        background: Container(
+          alignment: Alignment.centerLeft,
+          padding: const EdgeInsets.only(left: 20),
+          decoration: BoxDecoration(
+            color: Colors.red,
+            borderRadius: BorderRadius.circular(12),
+          ),
+          child: const Row(
             children: [
-              Row(
+              Icon(
+                Icons.delete,
+                color: Colors.white,
+                size: 24,
+              ),
+              SizedBox(width: 8),
+              Text(
+                'Delete',
+                style: TextStyle(
+                  color: Colors.white,
+                  fontWeight: FontWeight.bold,
+                  fontSize: 16,
+                ),
+              ),
+            ],
+          ),
+        ),
+        child: Card(
+          margin: EdgeInsets.zero,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(10),
+          ),
+          child: InkWell(
+            borderRadius: BorderRadius.circular(10),
+            onTap: () async {
+              final result = await Navigator.push(
+                context,
+                MaterialPageRoute(
+                  builder: (_) =>
+                      PurchaseInvoiceFormScreen(invoiceId: invoice.id),
+                ),
+              );
+              if (result == true && mounted) {
+                setState(() {}); // Refresh list
+              }
+            },
+            child: Padding(
+              padding: const EdgeInsets.all(12),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
                 children: [
-                  // Invoice Icon
-                  Container(
-                    width: 48,
-                    height: 48,
-                    decoration: BoxDecoration(
-                      color: Colors.orange.shade100,
-                      borderRadius: BorderRadius.circular(8),
-                    ),
-                    child: const Icon(
-                      Icons.shopping_bag,
-                      color: Colors.orange,
-                      size: 24,
-                    ),
-                  ),
-                  const SizedBox(width: 12),
-
-                  // Invoice Details
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Row(
-                          children: [
-                            Text(
-                              'Purchase #${invoice.id}',
-                              style: const TextStyle(
-                                fontSize: 16,
-                                fontWeight: FontWeight.w600,
-                              ),
-                            ),
-                            const Spacer(),
-                            if (invoice.status != null)
-                              Container(
-                                padding: const EdgeInsets.symmetric(
-                                  horizontal: 8,
-                                  vertical: 2,
-                                ),
-                                decoration: BoxDecoration(
-                                  color: _getStatusColor(invoice.status!)
-                                      .withAlpha(51),
-                                  borderRadius: BorderRadius.circular(4),
-                                ),
-                                child: Text(
-                                  invoice.status!,
-                                  style: TextStyle(
-                                    fontSize: 10,
-                                    color: _getStatusColor(invoice.status!),
-                                    fontWeight: FontWeight.w600,
-                                  ),
-                                ),
-                              ),
-                          ],
-                        ),
-                        const SizedBox(height: 4),
-                        FutureBuilder<Party?>(
+                  // Row 1: Supplier Name (left) + Date (right)
+                  Row(
+                    children: [
+                      Expanded(
+                        child: FutureBuilder<Party?>(
                           future: service.getPartyForInvoice(invoice.partyId),
                           builder: (context, snapshot) {
                             final partyName =
                                 snapshot.data?.name ?? 'Loading...';
                             return Text(
                               partyName,
-                              style: TextStyle(
+                              style: const TextStyle(
                                 fontSize: 14,
-                                color: colorScheme.onSurfaceVariant,
+                                fontWeight: FontWeight.w600,
                               ),
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
                             );
                           },
                         ),
-                      ],
-                    ),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 12),
-              const Divider(height: 1),
-              const SizedBox(height: 12),
-
-              // Date and Amount
-              Row(
-                children: [
-                  Icon(
-                    Icons.calendar_today,
-                    size: 14,
-                    color: colorScheme.onSurfaceVariant,
-                  ),
-                  const SizedBox(width: 6),
-                  Text(
-                    _dateFormat.format(invoice.invoiceDate),
-                    style: TextStyle(
-                      fontSize: 12,
-                      color: colorScheme.onSurfaceVariant,
-                    ),
-                  ),
-                  const Spacer(),
-                  Text(
-                    _currencyFormat.format(invoice.grandTotal),
-                    style: const TextStyle(
-                      fontSize: 16,
-                      fontWeight: FontWeight.bold,
-                      color: Colors.orange,
-                    ),
-                  ),
-                ],
-              ),
-
-              // Due Date if exists
-              if (invoice.dueDate != null) ...[
-                const SizedBox(height: 6),
-                Row(
-                  children: [
-                    Icon(
-                      Icons.event,
-                      size: 14,
-                      color: colorScheme.onSurfaceVariant,
-                    ),
-                    const SizedBox(width: 6),
-                    Text(
-                      'Due: ${_dateFormat.format(invoice.dueDate!)}',
-                      style: TextStyle(
-                        fontSize: 12,
-                        color: invoice.dueDate!.isBefore(DateTime.now())
-                            ? Colors.red
-                            : colorScheme.onSurfaceVariant,
                       ),
-                    ),
-                  ],
-                ),
-              ],
-
-              // Action Buttons
-              const SizedBox(height: 12),
-              Row(
-                mainAxisAlignment: MainAxisAlignment.end,
-                children: [
-                  OutlinedButton.icon(
-                    onPressed: () async {
-                      final result = await Navigator.push(
-                        context,
-                        MaterialPageRoute(
-                          builder: (_) =>
-                              PurchaseInvoiceFormScreen(invoiceId: invoice.id),
+                      Text(
+                        DateFormat('dd MMM yy').format(invoice.invoiceDate),
+                        style: TextStyle(
+                          fontSize: 10,
+                          color: colorScheme.onSurfaceVariant,
                         ),
-                      );
-                      if (result == true && mounted) {
-                        setState(() {}); // Refresh list
-                      }
-                    },
-                    icon: const Icon(Icons.edit, size: 16),
-                    label: const Text('Edit'),
-                    style: OutlinedButton.styleFrom(
-                      foregroundColor: Colors.orange,
-                      side: const BorderSide(color: Colors.orange),
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 12,
-                        vertical: 8,
                       ),
-                    ),
+                    ],
                   ),
-                  const SizedBox(width: 8),
-                  OutlinedButton.icon(
-                    onPressed: () => _deleteInvoice(invoice),
-                    icon: const Icon(Icons.delete, size: 16, color: Colors.red),
-                    label: const Text('Delete',
-                        style: TextStyle(color: Colors.red)),
-                    style: OutlinedButton.styleFrom(
-                      side: const BorderSide(color: Colors.red),
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 12,
-                        vertical: 8,
+                  const SizedBox(height: 8),
+
+                  // Row 2: Amount (left) + Status Badge
+                  Row(
+                    children: [
+                      Expanded(
+                        child: Text(
+                          'Rs ${NumberFormat('#,##0').format(invoice.grandTotal)}',
+                          style: const TextStyle(
+                            fontSize: 16,
+                            fontWeight: FontWeight.bold,
+                            color: Colors.black,
+                          ),
+                        ),
                       ),
-                    ),
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 4,
+                          vertical: 1,
+                        ),
+                        decoration: BoxDecoration(
+                          color: Colors.orange.shade100,
+                          borderRadius: BorderRadius.circular(6),
+                        ),
+                        child: Text(
+                          'UNPAID',
+                          style: TextStyle(
+                            fontSize: 8,
+                            fontWeight: FontWeight.bold,
+                            color: Colors.orange.shade700,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 6),
+
+                  // Row 3: Due Balance (left) + Overdue Status (right)
+                  Row(
+                    children: [
+                      Icon(
+                        Icons.account_balance_wallet,
+                        size: 12,
+                        color: Colors.red.shade600,
+                      ),
+                      const SizedBox(width: 4),
+                      Expanded(
+                        child: Text(
+                          'Due: Rs ${NumberFormat('#,##0').format(invoice.grandTotal)}',
+                          style: TextStyle(
+                            fontSize: 10,
+                            color: Colors.red.shade600,
+                            fontWeight: FontWeight.w600,
+                          ),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ),
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 4,
+                          vertical: 1,
+                        ),
+                        decoration: BoxDecoration(
+                          color: Colors.red.shade50,
+                          borderRadius: BorderRadius.circular(4),
+                        ),
+                        child: Text(
+                          'Overdue',
+                          style: TextStyle(
+                            fontSize: 8,
+                            fontWeight: FontWeight.bold,
+                            color: Colors.red.shade700,
+                          ),
+                        ),
+                      ),
+                    ],
                   ),
                 ],
               ),
-            ],
+            ),
           ),
-        ),
-      ),
-    );
+        ));
   }
 
   Color _getStatusColor(String status) {
     switch (status.toLowerCase()) {
       case 'paid':
         return Colors.green;
-      case 'pending':
-        return Colors.orange;
       case 'overdue':
         return Colors.red;
       case 'cancelled':

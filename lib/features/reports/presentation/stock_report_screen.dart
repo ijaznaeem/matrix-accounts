@@ -1,3 +1,5 @@
+// ignore_for_file: deprecated_member_use
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:isar/isar.dart';
@@ -27,7 +29,7 @@ class _StockReportScreenState extends ConsumerState<StockReportScreen> {
     return Scaffold(
       appBar: AppBar(
         title: const Text('Stock Report'),
-        backgroundColor: Colors.green.shade700,
+        backgroundColor: Colors.blueAccent,
         actions: [
           IconButton(
             icon: Icon(_showOnlyTracked

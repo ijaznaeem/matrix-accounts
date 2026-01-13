@@ -1,3 +1,5 @@
+// ignore_for_file: use_build_context_synchronously
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
@@ -35,6 +37,36 @@ class _ProductFormScreenState extends ConsumerState<ProductFormScreen> {
       _costCtrl.text = p.lastCost.toString();
       _openingCtrl.text = p.openingQty.toString();
       _trackStock = p.isTracked;
+
+      // Load category and unit data
+      _loadProductData(p);
+    }
+  }
+
+  Future<void> _loadProductData(Product product) async {
+    final catAsync = ref.read(productCategoryProvider);
+    final unitAsync = ref.read(productUnitProvider);
+
+    catAsync.whenData((categories) {
+      if (product.categoryId != null) {
+        _category = categories.firstWhere(
+          (cat) => cat.id == product.categoryId,
+          orElse: () => categories.first,
+        );
+      }
+    });
+
+    unitAsync.whenData((units) {
+      if (product.uomId != null) {
+        _uom = units.firstWhere(
+          (unit) => unit.id == product.uomId,
+          orElse: () => units.first,
+        );
+      }
+    });
+
+    if (mounted) {
+      setState(() {});
     }
   }
 
@@ -116,11 +148,22 @@ class _ProductFormScreenState extends ConsumerState<ProductFormScreen> {
             const SizedBox(height: 8),
             _field(_costCtrl, 'Cost Price', isNumber: true),
             const SizedBox(height: 8),
-            _field(_openingCtrl, 'Opening Stock', isNumber: true),
+            if (_trackStock) ...[
+              _field(_openingCtrl, 'Opening Stock', isNumber: true),
+              const SizedBox(height: 8),
+            ],
             SwitchListTile(
               dense: true,
               value: _trackStock,
-              onChanged: (v) => setState(() => _trackStock = v),
+              onChanged: (v) {
+                setState(() {
+                  _trackStock = v;
+                  // Clear opening stock when stock tracking is disabled
+                  if (!v) {
+                    _openingCtrl.clear();
+                  }
+                });
+              },
               title: const Text('Track Stock'),
             ),
             const SizedBox(height: 12),
@@ -142,7 +185,9 @@ class _ProductFormScreenState extends ConsumerState<ProductFormScreen> {
 
                   await dao.saveProduct(p);
 
-                  if (widget.product == null && p.openingQty > 0) {
+                  if (widget.product == null &&
+                      _trackStock &&
+                      p.openingQty > 0) {
                     await dao.insertOpeningStock(
                       companyId: company.id,
                       productId: p.id,
@@ -167,6 +212,18 @@ class _ProductFormScreenState extends ConsumerState<ProductFormScreen> {
     return TextField(
       controller: c,
       keyboardType: isNumber ? TextInputType.number : TextInputType.text,
+      onChanged: label == 'Opening Stock'
+          ? (value) {
+              // Automatically enable stock tracking if opening stock is entered
+              if (value.isNotEmpty &&
+                  double.tryParse(value) != null &&
+                  double.tryParse(value)! > 0) {
+                if (!_trackStock) {
+                  setState(() => _trackStock = true);
+                }
+              }
+            }
+          : null,
       decoration: InputDecoration(
         labelText: label,
         border: const OutlineInputBorder(),

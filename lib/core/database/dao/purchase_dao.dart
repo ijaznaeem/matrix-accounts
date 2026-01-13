@@ -113,8 +113,6 @@ class PurchaseDao {
           String accountCode;
           if (paymentAccount.accountType == PaymentAccountType.cash) {
             accountCode = '1000';
-          } else if (paymentAccount.accountType == PaymentAccountType.cheque) {
-            accountCode = '1050';
           } else {
             accountCode = '1100'; // bank
           }
@@ -250,8 +248,6 @@ class PurchaseDao {
           String accountCode;
           if (paymentAccount.accountType == PaymentAccountType.cash) {
             accountCode = '1000';
-          } else if (paymentAccount.accountType == PaymentAccountType.cheque) {
-            accountCode = '1050';
           } else {
             accountCode = '1100'; // bank
           }

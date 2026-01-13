@@ -1,8 +1,12 @@
+// ignore_for_file: avoid_print, unused_element
+
 import 'dart:io';
 import 'dart:typed_data';
 import 'dart:ui' as ui;
 
+import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
+import 'package:image_picker/image_picker.dart';
 import 'package:intl/intl.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:pdf/pdf.dart';
@@ -15,7 +19,7 @@ import '../../../data/models/party_model.dart';
 import '../../../data/models/transaction_model.dart';
 
 class InvoiceGenerator {
-  static final _dateFormat = DateFormat('dd MMM, yyyy');
+  static final _dateFormat = DateFormat('dd MMM, yyyy hh:mm a');
   static final _currencyFormat = NumberFormat('#,##,##0.00');
 
   // Generate invoice as image
@@ -86,25 +90,20 @@ class InvoiceGenerator {
             fontSize: 20, fontWeight: FontWeight.w600, color: Colors.black87),
       );
 
-      // Invoice No
-      _drawText(
-        canvas,
-        'Invoice No.',
-        const Offset(600, 220),
-        TextStyle(fontSize: 14, color: Colors.grey.shade600),
-      );
-      _drawText(
-        canvas,
-        transaction.referenceNo,
-        const Offset(600, 245),
-        const TextStyle(
-            fontSize: 20, fontWeight: FontWeight.w600, color: Colors.black87),
-      );
+      // Phone number
+      if (party.phone != null && party.phone!.isNotEmpty) {
+        _drawText(
+          canvas,
+          'Phone: ${party.phone}',
+          const Offset(40, 270),
+          TextStyle(fontSize: 12, color: Colors.grey.shade600),
+        );
+      }
 
-      // Date
+      // Date & Time
       _drawText(
         canvas,
-        'Date: ${_dateFormat.format(invoice.invoiceDate)}',
+        'Date & Time: ${_dateFormat.format(invoice.invoiceDate)}',
         const Offset(600, 280),
         const TextStyle(fontSize: 14, color: Colors.black87),
       );
@@ -119,14 +118,38 @@ class InvoiceGenerator {
       canvas.drawRect(Rect.fromLTWH(40, yPos, 720, 35), headerPaint);
 
       // Table headers
-      _drawText(canvas, 'Item', Offset(50, yPos + 8),
-          const TextStyle(fontSize: 14, fontWeight: FontWeight.bold));
-      _drawText(canvas, 'Qty', Offset(410, yPos + 8),
-          const TextStyle(fontSize: 14, fontWeight: FontWeight.bold));
-      _drawText(canvas, 'Rate', Offset(510, yPos + 8),
-          const TextStyle(fontSize: 14, fontWeight: FontWeight.bold));
-      _drawText(canvas, 'Amount', Offset(660, yPos + 8),
-          const TextStyle(fontSize: 14, fontWeight: FontWeight.bold));
+      _drawText(
+          canvas,
+          'Item',
+          Offset(50, yPos + 8),
+          const TextStyle(
+              fontSize: 14,
+              fontWeight: FontWeight.bold,
+              color: Colors.black87));
+      _drawText(
+          canvas,
+          'Qty',
+          Offset(410, yPos + 8),
+          const TextStyle(
+              fontSize: 14,
+              fontWeight: FontWeight.bold,
+              color: Colors.black87));
+      _drawText(
+          canvas,
+          'Rate',
+          Offset(510, yPos + 8),
+          const TextStyle(
+              fontSize: 14,
+              fontWeight: FontWeight.bold,
+              color: Colors.black87));
+      _drawText(
+          canvas,
+          'Amount',
+          Offset(660, yPos + 8),
+          const TextStyle(
+              fontSize: 14,
+              fontWeight: FontWeight.bold,
+              color: Colors.black87));
 
       yPos += 35;
 
@@ -252,9 +275,12 @@ class InvoiceGenerator {
       );
 
       _drawText(canvas, 'Sub Total', Offset(500, yPos + 20),
-          const TextStyle(fontSize: 14));
-      _drawText(canvas, 'Rs ${_currencyFormat.format(subTotal)}',
-          Offset(650, yPos + 20), const TextStyle(fontSize: 14));
+          const TextStyle(fontSize: 14, color: Colors.black87));
+      _drawText(
+          canvas,
+          'Rs ${_currencyFormat.format(subTotal)}',
+          Offset(650, yPos + 20),
+          const TextStyle(fontSize: 14, color: Colors.black87));
 
       _drawText(
           canvas,
@@ -277,8 +303,14 @@ class InvoiceGenerator {
 
       // Payment details section if available
       if (paymentLines != null && paymentLines.isNotEmpty) {
-        _drawText(canvas, 'Payment Details', Offset(40, yPos),
-            const TextStyle(fontSize: 18, fontWeight: FontWeight.bold));
+        _drawText(
+            canvas,
+            'Payment Details',
+            Offset(40, yPos),
+            const TextStyle(
+                fontSize: 18,
+                fontWeight: FontWeight.bold,
+                color: Colors.black87));
         yPos += 30;
 
         final paymentBoxPaint = Paint()
@@ -302,8 +334,14 @@ class InvoiceGenerator {
           amountBorderPaint,
         );
 
-        _drawText(canvas, 'Cash Receipt', Offset(60, yPos + 15),
-            const TextStyle(fontSize: 16, fontWeight: FontWeight.w600));
+        _drawText(
+            canvas,
+            'Cash Receipt',
+            Offset(60, yPos + 15),
+            const TextStyle(
+                fontSize: 16,
+                fontWeight: FontWeight.w600,
+                color: Colors.black87));
         yPos += 40;
 
         double totalPaid = 0;
@@ -313,9 +351,12 @@ class InvoiceGenerator {
           totalPaid += amount;
 
           _drawText(canvas, accountName, Offset(80, yPos),
-              const TextStyle(fontSize: 14));
-          _drawText(canvas, 'Rs ${_currencyFormat.format(amount)}',
-              Offset(650, yPos), const TextStyle(fontSize: 14));
+              const TextStyle(fontSize: 14, color: Colors.black87));
+          _drawText(
+              canvas,
+              'Rs ${_currencyFormat.format(amount)}',
+              Offset(650, yPos),
+              const TextStyle(fontSize: 14, color: Colors.black87));
           yPos += 25;
         }
 
@@ -474,16 +515,6 @@ class InvoiceGenerator {
                       ),
                     ],
                   ),
-                  pw.Column(
-                    crossAxisAlignment: pw.CrossAxisAlignment.end,
-                    children: [
-                      pw.Text(
-                        'GENERATED ON',
-                        style: const pw.TextStyle(
-                            fontSize: 10, color: PdfColors.grey600),
-                      ),
-                    ],
-                  ),
                 ],
               ),
               pw.SizedBox(height: 30),
@@ -516,22 +547,18 @@ class InvoiceGenerator {
                         style: pw.TextStyle(
                             fontSize: 18, fontWeight: pw.FontWeight.bold),
                       ),
+                      if (party.phone != null && party.phone!.isNotEmpty) ...[
+                        pw.SizedBox(height: 4),
+                        pw.Text(
+                          'Phone: ${party.phone}',
+                          style: const pw.TextStyle(fontSize: 11),
+                        ),
+                      ],
                     ],
                   ),
                   pw.Column(
                     crossAxisAlignment: pw.CrossAxisAlignment.end,
                     children: [
-                      pw.Text(
-                        'Invoice No.',
-                        style: const pw.TextStyle(
-                            fontSize: 12, color: PdfColors.grey700),
-                      ),
-                      pw.SizedBox(height: 4),
-                      pw.Text(
-                        transaction.referenceNo,
-                        style: pw.TextStyle(
-                            fontSize: 18, fontWeight: pw.FontWeight.bold),
-                      ),
                       pw.SizedBox(height: 8),
                       pw.Text(
                         'Date: ${_dateFormat.format(invoice.invoiceDate)}',
@@ -768,6 +795,255 @@ class InvoiceGenerator {
       print('Error sharing image: $e');
       // You might want to show a user-friendly error message here
       rethrow;
+    }
+  }
+
+  static Future<void> _attachAsImage(
+    Company company,
+    Party party,
+    Invoice invoice,
+    Transaction transaction,
+    List<Map<String, dynamic>> lineItems,
+    List<Map<String, dynamic>>? paymentLines,
+  ) async {
+    // Show dialog to select attachment source
+    final BuildContext? context = _getCurrentContext();
+    if (context == null) {
+      print('Error: Unable to get context for dialog');
+      return;
+    }
+
+    showDialog(
+      context: context,
+      builder: (dialogContext) {
+        return AlertDialog(
+          title: const Text('Attach Invoice'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              ListTile(
+                leading: const Icon(Icons.image, color: Colors.blue),
+                title: const Text('Generated Invoice Image'),
+                onTap: () {
+                  Navigator.pop(dialogContext);
+                  _attachGeneratedImage(
+                    company,
+                    party,
+                    invoice,
+                    transaction,
+                    lineItems,
+                    paymentLines,
+                  );
+                },
+              ),
+              ListTile(
+                leading: const Icon(Icons.photo_library, color: Colors.purple),
+                title: const Text('Select from Gallery'),
+                onTap: () {
+                  Navigator.pop(dialogContext);
+                  _attachFromGallery(transaction.referenceNo);
+                },
+              ),
+              ListTile(
+                leading: const Icon(Icons.folder, color: Colors.orange),
+                title: const Text('Select File'),
+                onTap: () {
+                  Navigator.pop(dialogContext);
+                  _attachFromFilePicker(transaction.referenceNo);
+                },
+              ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
+  static Future<void> _attachAsImageWithContext(
+    BuildContext context,
+    Company company,
+    Party party,
+    Invoice invoice,
+    Transaction transaction,
+    List<Map<String, dynamic>> lineItems,
+    List<Map<String, dynamic>>? paymentLines,
+  ) async {
+    // Show dialog to select attachment source
+    showDialog(
+      context: context,
+      builder: (dialogContext) {
+        return AlertDialog(
+          title: const Text('Attach Invoice'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              ListTile(
+                leading: const Icon(Icons.image, color: Colors.blue),
+                title: const Text('Generated Invoice Image'),
+                onTap: () {
+                  Navigator.pop(dialogContext);
+                  _attachGeneratedImage(
+                    company,
+                    party,
+                    invoice,
+                    transaction,
+                    lineItems,
+                    paymentLines,
+                  );
+                },
+              ),
+              ListTile(
+                leading: const Icon(Icons.photo_library, color: Colors.purple),
+                title: const Text('Select from Gallery'),
+                onTap: () {
+                  Navigator.pop(dialogContext);
+                  _attachFromGallery(transaction.referenceNo);
+                },
+              ),
+              ListTile(
+                leading: const Icon(Icons.folder, color: Colors.orange),
+                title: const Text('Select File'),
+                onTap: () {
+                  Navigator.pop(dialogContext);
+                  _attachFromFilePicker(transaction.referenceNo);
+                },
+              ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
+  static Future<void> _attachGeneratedImage(
+    Company company,
+    Party party,
+    Invoice invoice,
+    Transaction transaction,
+    List<Map<String, dynamic>> lineItems,
+    List<Map<String, dynamic>>? paymentLines,
+  ) async {
+    try {
+      print(
+          'Starting attachment generation for invoice ${transaction.referenceNo}');
+
+      final imageBytes = await generateInvoiceImage(
+        company: company,
+        party: party,
+        invoice: invoice,
+        transaction: transaction,
+        lineItems: lineItems,
+        paymentLines: paymentLines,
+      );
+
+      print('Image generated successfully, size: ${imageBytes.length} bytes');
+
+      // Save to documents directory for attachment
+      final directory = await getApplicationDocumentsDirectory();
+      final invoicesDir = Directory('${directory.path}/invoices');
+
+      // Create invoices directory if it doesn't exist
+      if (!await invoicesDir.exists()) {
+        await invoicesDir.create(recursive: true);
+      }
+
+      final fileName = 'invoice_${transaction.referenceNo}.png';
+      final file = File('${invoicesDir.path}/$fileName');
+      await file.writeAsBytes(imageBytes);
+
+      print('Image saved to: ${file.path}');
+      print('Invoice image attached successfully at: ${file.path}');
+    } catch (e) {
+      print('Error attaching generated image: $e');
+      rethrow;
+    }
+  }
+
+  static Future<void> _attachFromGallery(String referenceNo) async {
+    try {
+      print('Opening image picker for gallery');
+      final ImagePicker picker = ImagePicker();
+
+      final XFile? pickedFile = await picker.pickImage(
+        source: ImageSource.gallery,
+        imageQuality: 85,
+      );
+
+      if (pickedFile == null) {
+        print('No image selected from gallery');
+        return;
+      }
+
+      final directory = await getApplicationDocumentsDirectory();
+      final invoicesDir = Directory('${directory.path}/invoices');
+
+      if (!await invoicesDir.exists()) {
+        await invoicesDir.create(recursive: true);
+      }
+
+      // Get file extension
+      final fileName =
+          'invoice_${referenceNo}_gallery_${DateTime.now().millisecondsSinceEpoch}.jpg';
+      final destinationPath = '${invoicesDir.path}/$fileName';
+
+      // Copy file to invoices directory
+      final File pickedFileObj = File(pickedFile.path);
+      await pickedFileObj.copy(destinationPath);
+
+      print('Image attached from gallery to: $destinationPath');
+    } catch (e) {
+      print('Error attaching image from gallery: $e');
+      rethrow;
+    }
+  }
+
+  static Future<void> _attachFromFilePicker(String referenceNo) async {
+    try {
+      print('Opening file picker');
+
+      final FilePickerResult? result = await FilePicker.platform.pickFiles(
+        type: FileType.custom,
+        allowedExtensions: ['pdf', 'doc', 'docx', 'xls', 'xlsx', 'jpg', 'png'],
+        allowMultiple: false,
+      );
+
+      if (result == null || result.files.isEmpty) {
+        print('No file selected');
+        return;
+      }
+
+      final PlatformFile pickedFile = result.files.first;
+      final File sourceFile = File(pickedFile.path!);
+
+      final directory = await getApplicationDocumentsDirectory();
+      final invoicesDir = Directory('${directory.path}/invoices');
+
+      if (!await invoicesDir.exists()) {
+        await invoicesDir.create(recursive: true);
+      }
+
+      // Copy file to invoices directory
+      final fileName =
+          'invoice_${referenceNo}_file_${DateTime.now().millisecondsSinceEpoch}.${pickedFile.extension}';
+      final destinationPath = '${invoicesDir.path}/$fileName';
+
+      await sourceFile.copy(destinationPath);
+
+      print('File attached to: $destinationPath');
+    } catch (e) {
+      print('Error attaching file: $e');
+      rethrow;
+    }
+  }
+
+  static BuildContext? _getCurrentContext() {
+    // This is a workaround to get context in a static method
+    // In production, consider using a different approach like passing context as parameter
+    try {
+      final key = GlobalKey<NavigatorState>();
+      return key.currentContext;
+    } catch (e) {
+      return null;
     }
   }
 

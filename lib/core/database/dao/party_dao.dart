@@ -45,7 +45,7 @@ class PartyDao {
       if (difference != 0) {
         // Determine which account to update based on party type
         String accountCode;
-        if (party.partyType == PartyType.customer || 
+        if (party.partyType == PartyType.customer ||
             party.partyType == PartyType.both) {
           accountCode = '1200'; // Accounts Receivable
         } else {
@@ -146,9 +146,9 @@ class PartyDao {
     final party = await isar.partys.get(partyId);
     if (party == null) return 0;
 
-    // Determine which account to check
-    String accountCode;
-    if (party.partyType == PartyType.customer || 
+    // Determine which ledger account to use for this party type
+    final String accountCode;
+    if (party.partyType == PartyType.customer ||
         party.partyType == PartyType.both) {
       accountCode = '1200'; // Accounts Receivable
     } else {
@@ -163,15 +163,25 @@ class PartyDao {
 
     if (account == null) return 0;
 
-    // Get latest transaction for this party
-    final latestTransaction = await isar.accountTransactions
+    // Sum debits and credits for THIS party on this account.
+    // runningBalance is the whole-account cumulative total and MUST NOT be
+    // used here — it reflects all parties combined.
+    final transactions = await isar.accountTransactions
         .filter()
         .companyIdEqualTo(companyId)
         .accountIdEqualTo(account.id)
         .partyIdEqualTo(partyId)
-        .sortByTransactionDateDesc()
-        .findFirst();
+        .findAll();
 
-    return latestTransaction?.runningBalance ?? 0;
+    double totalDebit = 0;
+    double totalCredit = 0;
+    for (final t in transactions) {
+      totalDebit += t.debit;
+      totalCredit += t.credit;
+    }
+
+    // For AR (1200): debit = amount owed by customer, credit = amount paid
+    // Net positive = customer still owes money
+    return totalDebit - totalCredit;
   }
 }

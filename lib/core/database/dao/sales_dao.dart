@@ -5,16 +5,19 @@ import '../../../data/models/party_model.dart';
 import '../../../data/models/payment_models.dart';
 import '../../../data/models/transaction_model.dart';
 import 'account_dao.dart';
+import 'party_dao.dart';
 import 'payment_dao.dart';
 
 class SalesDao {
   final Isar isar;
   late final AccountDao _accountDao;
   late final PaymentDao _paymentDao;
+  late final PartyDao _partyDao;
 
   SalesDao(this.isar) {
     _accountDao = AccountDao(isar);
     _paymentDao = PaymentDao(isar);
+    _partyDao = PartyDao(isar);
   }
 
   Future<Invoice?> getInvoiceById(int invoiceId) async {
@@ -55,6 +58,16 @@ class SalesDao {
     await isar.writeTxn(() async {
       final txnId = await isar.transactions.put(transaction);
 
+      // Calculate customer's current balance (opening balance for this invoice)
+      final currentBalance = await _partyDao.getPartyBalance(
+        partyId: customer.id,
+        companyId: companyId,
+      );
+
+      // Calculate total payment amount
+      final totalPayment =
+          paymentLines?.fold(0.0, (sum, p) => sum + p.amount) ?? 0.0;
+
       final invoice = Invoice()
         ..companyId = companyId
         ..transactionId = txnId
@@ -62,7 +75,12 @@ class SalesDao {
         ..partyId = customer.id
         ..invoiceDate = date
         ..grandTotal = transaction.totalAmount
-        ..status = 'Pending';
+        ..status = 'Pending'
+        ..previousBalance = currentBalance // Opening balance
+        ..paidAmount = totalPayment // Payment on this invoice
+        ..remainingBalance = currentBalance +
+            transaction.totalAmount -
+            totalPayment; // Closing balance
 
       final invoiceId = await isar.invoices.put(invoice);
 
@@ -133,16 +151,20 @@ class SalesDao {
           // Get payment account to determine type
           final paymentAccount = await _paymentDao
               .getPaymentAccountById(paymentLine.paymentAccountId);
-          if (paymentAccount == null) continue;
+          if (paymentAccount == null) {
+            throw Exception(
+              'Payment account (ID: ${paymentLine.paymentAccountId}) not found. '
+              'Please verify your Cash/Bank account is set up under Settings.',
+            );
+          }
 
           // Determine account code based on account type
-          String accountCode;
-          if (paymentAccount.accountType == PaymentAccountType.cash) {
-            accountCode = '1000';
-          } else if (paymentAccount.accountType == PaymentAccountType.cheque) {
-            accountCode = '1050';
-          } else {
-            accountCode = '1100'; // bank
+          final String accountCode;
+          switch (paymentAccount.accountType) {
+            case PaymentAccountType.cash:
+              accountCode = '1000';
+            case PaymentAccountType.bank:
+              accountCode = '1100';
           }
 
           // Add microsecond delay for unique timestamps
@@ -194,10 +216,33 @@ class SalesDao {
         await isar.transactions.put(transaction);
       }
 
-      // Update invoice
+      // Calculate customer's current balance BEFORE this invoice
+      // We need to exclude this invoice's effect and recalculate
+      final currentBalance = await _partyDao.getPartyBalance(
+        partyId: customer.id,
+        companyId: companyId,
+      );
+
+      // Adjust for the old invoice effect to get the balance before this invoice
+      final oldOpeningBalance = currentBalance -
+          invoice.grandTotal +
+          invoice.paidAmount -
+          invoice.previousBalance;
+
+      // Calculate total payment amount
+      final totalPayment =
+          paymentLines?.fold(0.0, (sum, p) => sum + p.amount) ?? 0.0;
+      final newTotal = lines.fold(0.0, (sum, l) => sum + (l.qty * l.rate));
+
+      // Update invoice with balance tracking
       invoice.partyId = customer.id;
       invoice.invoiceDate = date;
-      invoice.grandTotal = lines.fold(0.0, (sum, l) => sum + (l.qty * l.rate));
+      invoice.grandTotal = newTotal;
+      invoice.previousBalance =
+          oldOpeningBalance; // Opening balance before invoice
+      invoice.paidAmount = totalPayment; // Payment on this invoice
+      invoice.remainingBalance =
+          oldOpeningBalance + newTotal - totalPayment; // Closing balance
       await isar.invoices.put(invoice);
 
       // Delete old transaction lines and stock ledger entries
@@ -253,7 +298,7 @@ class SalesDao {
       await _accountDao.deleteSaleInvoiceTransactionsInternal(invoiceId);
 
       // Record new invoice accounting (DR AR, CR Sales)
-      final newTotal = lines.fold(0.0, (sum, l) => sum + (l.qty * l.rate));
+      // newTotal is already calculated above
 
       await _accountDao.recordSaleInvoiceInternal(
         companyId: companyId,
@@ -291,16 +336,20 @@ class SalesDao {
           // Get payment account to determine type
           final paymentAccount = await _paymentDao
               .getPaymentAccountById(paymentLine.paymentAccountId);
-          if (paymentAccount == null) continue;
+          if (paymentAccount == null) {
+            throw Exception(
+              'Payment account (ID: ${paymentLine.paymentAccountId}) not found. '
+              'Please verify your Cash/Bank account is set up under Settings.',
+            );
+          }
 
           // Determine account code based on account type
-          String accountCode;
-          if (paymentAccount.accountType == PaymentAccountType.cash) {
-            accountCode = '1000';
-          } else if (paymentAccount.accountType == PaymentAccountType.cheque) {
-            accountCode = '1050';
-          } else {
-            accountCode = '1100'; // bank
+          final String accountCode;
+          switch (paymentAccount.accountType) {
+            case PaymentAccountType.cash:
+              accountCode = '1000';
+            case PaymentAccountType.bank:
+              accountCode = '1100';
           }
 
           // Add microsecond delay for unique timestamps
@@ -323,9 +372,7 @@ class SalesDao {
         }
       }
 
-      // Update invoice grand total
-      invoice.grandTotal = newTotal;
-      await isar.invoices.put(invoice);
+      // Invoice balances are already updated above, no need to update again
     });
   }
 

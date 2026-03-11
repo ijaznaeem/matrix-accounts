@@ -39,17 +39,56 @@ class PurchaseDao {
     List<sales.PaymentLineInput>? paymentLines,
     int? userId,
   }) async {
+    final totalAmount = lines.fold(0.0, (sum, l) => sum + (l.qty * l.rate));
+
+    // Debug the amount calculation
+    print('=== PURCHASE DAO AMOUNT DEBUG ===');
+    print('Lines count: ${lines.length}');
+    for (int i = 0; i < lines.length; i++) {
+      final line = lines[i];
+      print(
+          'Line $i: Qty=${line.qty}, Rate=${line.rate}, Amount=${line.qty * line.rate}');
+    }
+    print('Calculated totalAmount: $totalAmount');
+    print('Payment lines count: ${paymentLines?.length ?? 0}');
+    if (paymentLines != null) {
+      for (int i = 0; i < paymentLines.length; i++) {
+        print('Payment $i: Amount=${paymentLines[i].amount}');
+      }
+    }
+    print('===============================');
+
     final transaction = Transaction()
       ..companyId = companyId
       ..type = TransactionType.purchase
       ..date = date
       ..referenceNo = referenceNo
       ..partyId = supplier.id
-      ..totalAmount = lines.fold(0.0, (sum, l) => sum + (l.qty * l.rate))
+      ..totalAmount = totalAmount
       ..createdByUserId = userId;
 
     await isar.writeTxn(() async {
       final txnId = await isar.transactions.put(transaction);
+
+      // Calculate previous balance for this supplier
+      final previousInvoices = await isar.invoices
+          .filter()
+          .companyIdEqualTo(companyId)
+          .partyIdEqualTo(supplier.id)
+          .invoiceTypeEqualTo(InvoiceType.purchase)
+          .invoiceDateLessThan(date)
+          .findAll();
+
+      double previousBalance = 0;
+      for (final prevInvoice in previousInvoices) {
+        previousBalance += prevInvoice.remainingBalance;
+      }
+
+      // Calculate total paid amount from payment lines
+      double totalPaid = 0;
+      if (paymentLines != null) {
+        totalPaid = paymentLines.fold(0.0, (sum, p) => sum + p.amount);
+      }
 
       final invoice = Invoice()
         ..companyId = companyId
@@ -58,6 +97,11 @@ class PurchaseDao {
         ..partyId = supplier.id
         ..invoiceDate = date
         ..grandTotal = transaction.totalAmount
+        ..invoiceNumber = referenceNo
+        ..previousBalance = previousBalance
+        ..paidAmount = totalPaid
+        ..remainingBalance =
+            previousBalance + transaction.totalAmount - totalPaid
         ..status = 'Pending';
 
       final invoiceId = await isar.invoices.put(invoice);
@@ -113,8 +157,6 @@ class PurchaseDao {
           String accountCode;
           if (paymentAccount.accountType == PaymentAccountType.cash) {
             accountCode = '1000';
-          } else if (paymentAccount.accountType == PaymentAccountType.cheque) {
-            accountCode = '1050';
           } else {
             accountCode = '1100'; // bank
           }
@@ -250,8 +292,6 @@ class PurchaseDao {
           String accountCode;
           if (paymentAccount.accountType == PaymentAccountType.cash) {
             accountCode = '1000';
-          } else if (paymentAccount.accountType == PaymentAccountType.cheque) {
-            accountCode = '1050';
           } else {
             accountCode = '1100'; // bank
           }

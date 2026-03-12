@@ -77,6 +77,27 @@ class PaymentDao {
         ..createdAt = DateTime.now();
 
       await isar.paymentAccounts.put(account);
+
+      await isar.syncChanges.put(SyncChange()
+        ..companyId = account.companyId
+        ..table = 'payment_accounts'
+        ..operation = ChangeOperation.create
+        ..recordId = account.id
+        ..data = jsonEncode({
+          'id': account.id,
+          'company_id': account.companyId,
+          'account_type': account.accountType.name,
+          'account_name': account.accountName,
+          'bank_name': account.bankName,
+          'account_number': account.accountNumber,
+          'ifsc_code': account.ifscCode,
+          'icon': account.icon,
+          'is_active': account.isActive,
+          'is_default': account.isDefault,
+          'created_at': account.createdAt.toIso8601String(),
+        })
+        ..createdAt = DateTime.now()
+        ..synced = false);
     });
   }
 
@@ -98,6 +119,27 @@ class PaymentDao {
         if (icon != null) account.icon = icon;
         account.updatedAt = DateTime.now();
         await isar.paymentAccounts.put(account);
+
+        await isar.syncChanges.put(SyncChange()
+          ..companyId = account.companyId
+          ..table = 'payment_accounts'
+          ..operation = ChangeOperation.update
+          ..recordId = account.id
+          ..data = jsonEncode({
+            'id': account.id,
+            'company_id': account.companyId,
+            'account_type': account.accountType.name,
+            'account_name': account.accountName,
+            'bank_name': account.bankName,
+            'account_number': account.accountNumber,
+            'ifsc_code': account.ifscCode,
+            'icon': account.icon,
+            'is_active': account.isActive,
+            'is_default': account.isDefault,
+            'created_at': account.createdAt.toIso8601String(),
+          })
+          ..createdAt = DateTime.now()
+          ..synced = false);
       }
     });
   }
@@ -109,6 +151,27 @@ class PaymentDao {
         account.isActive = false;
         account.updatedAt = DateTime.now();
         await isar.paymentAccounts.put(account);
+
+        await isar.syncChanges.put(SyncChange()
+          ..companyId = account.companyId
+          ..table = 'payment_accounts'
+          ..operation = ChangeOperation.update
+          ..recordId = account.id
+          ..data = jsonEncode({
+            'id': account.id,
+            'company_id': account.companyId,
+            'account_type': account.accountType.name,
+            'account_name': account.accountName,
+            'bank_name': account.bankName,
+            'account_number': account.accountNumber,
+            'ifsc_code': account.ifscCode,
+            'icon': account.icon,
+            'is_active': account.isActive,
+            'is_default': account.isDefault,
+            'created_at': account.createdAt.toIso8601String(),
+          })
+          ..createdAt = DateTime.now()
+          ..synced = false);
       }
     });
   }

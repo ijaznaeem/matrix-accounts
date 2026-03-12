@@ -148,6 +148,11 @@ class SyncService
     /**
      * Apply a single change from device
      */
+    /**
+     * Tables that have no company_id column (global/shared tables).
+     */
+    protected array $globalTables = ['units_of_measure'];
+
     protected function applyChange(
         int $companyId,
         int $userId,
@@ -164,41 +169,79 @@ class SyncService
             throw new \Exception("Unknown table: {$tableName}");
         }
 
+        $isGlobal = in_array($tableName, $this->globalTables);
         $result = [];
+
+        // These will be set in each switch branch and used to log to sync_changes.
+        $syncRecordId = 0;
+        $syncData     = $data;
 
         switch ($operation) {
             case 'INSERT':
-                // Remove temporary ID and any auto-increment IDs
                 unset($data['id']);
-                $data['company_id'] = $companyId;
+                if (!$isGlobal) {
+                    $data['company_id'] = $companyId;
+                }
 
-                $record = $modelClass::create($data);
+                // For global tables with unique constraints, use firstOrCreate
+                // to avoid duplicate errors from multiple devices.
+                if ($isGlobal) {
+                    $uniqueKey = array_intersect_key($data, array_flip(['name']));
+                    $record = $modelClass::firstOrCreate($uniqueKey, $data);
+                } else {
+                    $record = $modelClass::create($data);
+                }
                 $result['server_id'] = $record->id;
+                $syncRecordId        = (int) $record->id;
+                // Include the server-assigned id so pulling devices receive the canonical id.
+                $syncData            = $record->toArray();
                 break;
 
             case 'UPDATE':
                 $recordId = $data['id'] ?? $change['record_id'];
-                $record = $modelClass::where('company_id', $companyId)
-                    ->find($recordId);
+                $query = $isGlobal
+                    ? $modelClass::query()
+                    : $modelClass::where('company_id', $companyId);
+                $record = $query->find($recordId);
 
                 if ($record) {
-                    // Check for conflicts (optional - basic timestamp comparison)
-                    // For now, use last-write-wins strategy
                     $record->update($data);
                 } else {
                     throw new \Exception("Record not found: {$tableName}#{$recordId}");
                 }
+                $syncRecordId = (int) $recordId;
+                $syncData     = array_merge($data, ['id' => $syncRecordId]);
                 break;
 
             case 'DELETE':
                 $recordId = $data['id'] ?? $change['record_id'];
-                $record = $modelClass::where('company_id', $companyId)
-                    ->find($recordId);
+                $query = $isGlobal
+                    ? $modelClass::query()
+                    : $modelClass::where('company_id', $companyId);
+                $record = $query->find($recordId);
 
                 if ($record) {
                     $record->delete();
                 }
+                $syncRecordId = (int) ($recordId ?? 0);
+                $syncData     = ['id' => $syncRecordId];
                 break;
+        }
+
+        // ── Critical: log every applied change to sync_changes ─────────────
+        // Without this entry, other devices querying sync_changes during a pull
+        // will never see the data that was just written to the actual tables,
+        // making server→device sync completely non-functional.
+        if ($syncRecordId > 0) {
+            $this->recordChange(
+                $companyId,
+                $userId,
+                $deviceId,
+                $tableName,
+                $syncRecordId,
+                $operation,
+                $syncData
+            );
         }
 
         return $result;

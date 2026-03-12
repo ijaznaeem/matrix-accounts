@@ -2,6 +2,10 @@
 
 A new Flutter project.
 
+## Project Guidelines
+
+- [Future Enhancement & New Table Guidelines](.github/future-enhancement-guidelines.md)
+
 ## Getting Started
 
 This project is a starting point for a Flutter application.

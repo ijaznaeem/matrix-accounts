@@ -1,10 +1,12 @@
 import 'dart:convert';
 
+import 'package:flutter/foundation.dart';
 import 'package:isar/isar.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:uuid/uuid.dart';
 
 import '../../data/models/account_models.dart' as am;
+import '../../data/models/company_model.dart';
 import '../../data/models/inventory_models.dart';
 import '../../data/models/invoice_stock_models.dart';
 import '../../data/models/party_model.dart';
@@ -49,11 +51,12 @@ class SyncService {
   /// Pull changes from server and apply them to local Isar.
   Future<SyncResult> pullChanges({
     required int companyId,
+    int? serverCompanyId,
     List<String>? tables,
   }) async {
     try {
       final response = await apiClient.post('/api/sync/pull', {
-        'company_id': companyId,
+        'company_id': serverCompanyId ?? companyId,
         'device_id': deviceId,
         'last_version': lastSyncVersion,
         if (tables != null) 'tables': tables,
@@ -63,7 +66,7 @@ class SyncService {
         final changes = response['changes'] as List;
         final currentVersion = response['current_version'] as int;
 
-        await _applyChanges(changes);
+        await _applyChanges(changes, localCompanyId: companyId);
         await setLastSyncVersion(currentVersion);
 
         return SyncResult(
@@ -85,29 +88,45 @@ class SyncService {
   /// Push unsynced local SyncChange records to the server.
   Future<SyncResult> pushChanges({
     required int companyId,
+    int? serverCompanyId,
     required List<Map<String, dynamic>> changes,
   }) async {
     try {
       final response = await apiClient.post('/api/sync/push', {
-        'company_id': companyId,
+        'company_id': serverCompanyId ?? companyId,
         'device_id': deviceId,
         'changes': changes,
       });
 
       if (response['success'] == true) {
-        final idMappings =
-            response['id_mappings'] as Map<String, dynamic>? ?? {};
-        final conflicts = response['conflicts'] as List? ?? [];
-        final currentVersion = response['current_version'] as int;
+        final idMappingsRaw = response['id_mappings'];
+        final idMappings = (idMappingsRaw is Map)
+            ? Map<String, dynamic>.from(idMappingsRaw)
+            : <String, dynamic>{};
+        final conflictsRaw = response['conflicts'];
+        final currentVersionRaw = response['current_version'];
+        final currentVersion = currentVersionRaw is int
+            ? currentVersionRaw
+            : int.tryParse(currentVersionRaw?.toString() ?? '');
+        final conflictsCount = conflictsRaw is List
+            ? conflictsRaw.length
+            : (conflictsRaw is int ? conflictsRaw : 0);
 
-        if (idMappings.isNotEmpty) await _updateLocalIds(idMappings);
-        await setLastSyncVersion(currentVersion);
+        // Resolve Isar record IDs from the local_id keys each change carries.
+        // Only mark exactly those records as synced — not all pending changes.
+        final syncChangeIds = changes
+            .map((c) => c['local_id'] as String?)
+            .whereType<String>()
+            .map((lid) => int.tryParse(lid.replaceFirst('local_', '')))
+            .whereType<int>()
+            .toList();
+
+        await _updateLocalIds(idMappings, syncChangeIds);
 
         return SyncResult(
           success: true,
-          changesApplied: changes.length,
           currentVersion: currentVersion,
-          conflicts: conflicts.length,
+          conflicts: conflictsCount,
         );
       }
 
@@ -122,22 +141,84 @@ class SyncService {
 
   /// Full bidirectional sync: pull first, then push local changes.
   Future<SyncResult> fullSync(int companyId) async {
-    final pullResult = await pullChanges(companyId: companyId);
+    // Require auth token — sync needs a server account
+    if (apiClient.token == null) {
+      return SyncResult(
+        success: false,
+        error:
+            'Not authenticated for sync. Please log out and sign in with your server account credentials.',
+      );
+    }
+
+    // Register or find the company on the server, get server-side company ID
+    final serverCompanyId = await _ensureServerCompanyId(companyId);
+    if (serverCompanyId == null) {
+      return SyncResult(
+        success: false,
+        error: 'Failed to register company on server. Check your connection.',
+      );
+    }
+
+    final pullResult = await pullChanges(
+        companyId: companyId, serverCompanyId: serverCompanyId);
     if (!pullResult.success) return pullResult;
 
     final localChanges = await _getLocalChanges(companyId);
     if (localChanges.isEmpty) return pullResult;
 
-    return pushChanges(companyId: companyId, changes: localChanges);
+    return pushChanges(
+        companyId: companyId,
+        serverCompanyId: serverCompanyId,
+        changes: localChanges);
+  }
+
+  /// Finds or creates the company on the server and caches the server ID.
+  Future<int?> _ensureServerCompanyId(int localCompanyId) async {
+    final cacheKey = 'server_company_id_$localCompanyId';
+    final cached = prefs.getInt(cacheKey);
+    if (cached != null) return cached;
+
+    final company = await _isar.companys.get(localCompanyId);
+    if (company == null) return null;
+
+    try {
+      // Check if already on server
+      final listResponse = await apiClient.get('/api/companies');
+      if (listResponse['success'] == true) {
+        final companies =
+            (listResponse['companies'] as List).cast<Map<String, dynamic>>();
+        final match =
+            companies.where((c) => c['name'] == company.name).firstOrNull;
+        if (match != null) {
+          final serverId = match['id'] as int;
+          await prefs.setInt(cacheKey, serverId);
+          return serverId;
+        }
+      }
+      // Create on server
+      final createResponse = await apiClient.post('/api/companies', {
+        'name': company.name,
+        'primary_currency': company.primaryCurrency,
+        'financial_year_start_month': company.financialYearStartMonth,
+      });
+      if (createResponse['success'] == true) {
+        final serverId = createResponse['company']['id'] as int;
+        await prefs.setInt(cacheKey, serverId);
+        return serverId;
+      }
+    } catch (_) {}
+    return null;
   }
 
   /// Get sync status from the server for this device.
   Future<SyncStatus?> getSyncStatus(int companyId) async {
     try {
+      final cacheKey = 'server_company_id_$companyId';
+      final serverCompanyId = prefs.getInt(cacheKey) ?? companyId;
       final response = await apiClient.get(
         '/api/sync/status',
         queryParams: {
-          'company_id': companyId.toString(),
+          'company_id': serverCompanyId.toString(),
           'device_id': deviceId,
         },
       );
@@ -167,15 +248,26 @@ class SyncService {
 
   /// Read all unsynced SyncChange records from Isar and format them
   /// for the /api/sync/push payload.
+  /// Includes both company-scoped records and global-table records (companyId=0).
   Future<List<Map<String, dynamic>>> _getLocalChanges(int companyId) async {
-    final unsynced = await _isar.syncChanges
+    final companyRecords = await _isar.syncChanges
         .filter()
         .companyIdEqualTo(companyId)
         .syncedEqualTo(false)
         .findAll();
 
-    return unsynced
+    // Also include global-table records (e.g. units_of_measure with companyId=0)
+    final globalRecords = await _isar.syncChanges
+        .filter()
+        .companyIdEqualTo(0)
+        .syncedEqualTo(false)
+        .findAll();
+
+    final allUnsynced = [...companyRecords, ...globalRecords];
+
+    return allUnsynced
         .map((c) => {
+              'local_id': 'local_${c.id}', // stable reference for id_mappings
               'table': c.table,
               'record_id': c.recordId,
               'operation': _opToString(c.operation),
@@ -218,13 +310,48 @@ class SyncService {
   // APPLY CHANGES FROM SERVER → LOCAL ISAR
   // ──────────────────────────────────────────────────────────────────────────
 
-  Future<void> _applyChanges(List<dynamic> changes) async {
+  Future<void> _applyChanges(List<dynamic> changes,
+      {int? localCompanyId}) async {
     for (final raw in changes) {
-      final change = raw as Map<String, dynamic>;
+      Map<String, dynamic> change;
+      try {
+        change = raw as Map<String, dynamic>;
+      } catch (_) {
+        continue; // skip if top-level change is not a map
+      }
+
       final table = change['table'] as String;
       final operation = change['operation'] as String;
-      final data = change['data'] as Map<String, dynamic>;
       final recordId = change['record_id'] as int;
+
+      // Deep copy data and remap server company_id → local company_id
+      Map<String, dynamic> data;
+      try {
+        final rawData = change['data'];
+        if (rawData is String) {
+          final decoded = jsonDecode(rawData);
+          if (decoded is! Map<String, dynamic>) {
+            debugPrint(
+                '[Sync] Skipping $table#$recordId – data is not a map (String)');
+            continue;
+          }
+          data = Map<String, dynamic>.from(decoded);
+        } else if (rawData is Map) {
+          data = Map<String, dynamic>.from(rawData);
+        } else {
+          debugPrint(
+              '[Sync] Skipping $table#$recordId – unexpected data type: ${rawData.runtimeType}');
+          continue;
+        }
+      } catch (e) {
+        debugPrint(
+            '[Sync] Skipping $table#$recordId – failed to parse data: $e');
+        continue;
+      }
+
+      if (localCompanyId != null && data.containsKey('company_id')) {
+        data['company_id'] = localCompanyId;
+      }
 
       try {
         switch (table) {
@@ -250,6 +377,8 @@ class SyncService {
             await _applyPaymentOutChange(operation, data, recordId);
           case 'payment_out_lines':
             await _applyPaymentOutLineChange(operation, data, recordId);
+          case 'accounts':
+            await _applyAccountChange(operation, data, recordId);
           case 'stock_ledgers':
             await _applyStockLedgerChange(operation, data, recordId);
           case 'units_of_measure':
@@ -259,8 +388,10 @@ class SyncService {
           default:
             break; // ignore unknown tables
         }
-      } catch (_) {
-        // log silently — one bad record should not halt the rest
+      } catch (e) {
+        // log the error — one bad record should not halt the rest
+        debugPrint(
+            '[Sync] Failed to apply change for table=$table op=$operation id=$recordId: $e');
       }
     }
   }
@@ -285,11 +416,14 @@ class SyncService {
       await _isar.writeTxn(() => _isar.partys.delete(id));
       return;
     }
+    final partyTypeStr = d['party_type'] as String?;
     final party = Party()
       ..id = d['id'] as int
       ..companyId = d['company_id'] as int
       ..name = d['name'] as String
-      ..partyType = PartyType.values.byName(d['party_type'] as String)
+      ..partyType = partyTypeStr != null
+          ? PartyType.values.byName(partyTypeStr)
+          : PartyType.customer
       ..phone = d['phone'] as String?
       ..email = d['email'] as String?
       ..address = d['address'] as String?
@@ -562,6 +696,33 @@ class SyncService {
     await _isar.writeTxn(() => _isar.unitOfMeasures.put(uom));
   }
 
+  // ── Account ───────────────────────────────────────────────────────────────
+
+  Future<void> _applyAccountChange(
+      String op, Map<String, dynamic> d, int id) async {
+    if (op == 'DELETE') {
+      await _isar.writeTxn(() => _isar.accounts.delete(id));
+      return;
+    }
+    final accountTypeStr = d['account_type'] as String?;
+    final account = am.Account()
+      ..id = d['id'] as int
+      ..companyId = d['company_id'] as int
+      ..name = d['name'] as String
+      ..code = d['code'] as String? ?? ''
+      ..accountType = accountTypeStr != null
+          ? am.AccountType.values.byName(accountTypeStr)
+          : am.AccountType.asset
+      ..parentAccountId = d['parent_account_id'] as int?
+      ..description = d['description'] as String?
+      ..openingBalance = _asDouble(d['opening_balance'])
+      ..currentBalance = _asDouble(d['current_balance'])
+      ..isSystem = _asBool(d['is_system'])
+      ..isActive = _asBool(d['is_active'])
+      ..createdAt = _asDate(d['created_at']);
+    await _isar.writeTxn(() => _isar.accounts.put(account));
+  }
+
   // ── ItemCategory ──────────────────────────────────────────────────────────
 
   Future<void> _applyItemCategoryChange(
@@ -582,18 +743,23 @@ class SyncService {
   // POST-PUSH: MARK LOCAL CHANGES AS SYNCED
   // ──────────────────────────────────────────────────────────────────────────
 
-  /// After a successful push, mark all pending SyncChange records as synced.
-  Future<void> _updateLocalIds(Map<String, dynamic> idMappings) async {
-    final pending =
-        await _isar.syncChanges.filter().syncedEqualTo(false).findAll();
-
-    if (pending.isEmpty) return;
+  /// After a successful push, mark only the pushed SyncChange records as
+  /// synced. Scoping to [syncChangeIds] prevents cross-company contamination
+  /// where a push for Company A would accidentally mark Company B's pending
+  /// records as synced.
+  Future<void> _updateLocalIds(
+      Map<String, dynamic> idMappings, List<int> syncChangeIds) async {
+    if (syncChangeIds.isEmpty) return;
 
     await _isar.writeTxn(() async {
-      for (final c in pending) {
+      final records = await _isar.syncChanges.getAll(syncChangeIds);
+      final toUpdate = records.whereType<SyncChange>().toList();
+      for (final c in toUpdate) {
         c.synced = true;
       }
-      await _isar.syncChanges.putAll(pending);
+      if (toUpdate.isNotEmpty) {
+        await _isar.syncChanges.putAll(toUpdate);
+      }
     });
   }
 }

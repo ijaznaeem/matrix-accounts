@@ -61,6 +61,25 @@ class SalesDao {
     await isar.writeTxn(() async {
       final txnId = await isar.transactions.put(transaction);
 
+      // Record sync change for created transaction
+      await isar.syncChanges.put(SyncChange()
+        ..companyId = companyId
+        ..table = 'transactions'
+        ..operation = ChangeOperation.create
+        ..recordId = txnId
+        ..data = jsonEncode({
+          'id': txnId,
+          'company_id': companyId,
+          'type': 'sale',
+          'date': date.toIso8601String(),
+          'reference_no': referenceNo,
+          'party_id': customer.id,
+          'total_amount': transaction.totalAmount,
+          'is_posted': false,
+        })
+        ..createdAt = DateTime.now()
+        ..synced = false);
+
       // Calculate customer's current balance (opening balance for this invoice)
       final currentBalance = await _partyDao.getPartyBalance(
         partyId: customer.id,
@@ -119,7 +138,22 @@ class SalesDao {
           ..unitPrice = l.rate
           ..lineAmount = l.qty * l.rate;
 
-        await isar.transactionLines.put(line);
+        final lineId = await isar.transactionLines.put(line);
+        await isar.syncChanges.put(SyncChange()
+          ..companyId = companyId
+          ..table = 'transaction_lines'
+          ..operation = ChangeOperation.create
+          ..recordId = lineId
+          ..data = jsonEncode({
+            'id': lineId,
+            'transaction_id': txnId,
+            'product_id': l.productId,
+            'quantity': l.qty,
+            'unit_price': l.rate,
+            'line_amount': l.qty * l.rate,
+          })
+          ..createdAt = DateTime.now()
+          ..synced = false);
 
         // Calculate COGS using weighted average cost
         final avgCost = await _calculateAverageCost(companyId, l.productId);
@@ -137,7 +171,26 @@ class SalesDao {
           ..transactionId = txnId
           ..invoiceId = invoiceId;
 
-        await isar.stockLedgers.put(stock);
+        final stockId = await isar.stockLedgers.put(stock);
+        await isar.syncChanges.put(SyncChange()
+          ..companyId = companyId
+          ..table = 'stock_ledgers'
+          ..operation = ChangeOperation.create
+          ..recordId = stockId
+          ..data = jsonEncode({
+            'id': stockId,
+            'company_id': companyId,
+            'product_id': l.productId,
+            'date': date.toIso8601String(),
+            'movement_type': 'outSale',
+            'quantity_delta': -l.qty,
+            'unit_cost': unitCost,
+            'total_cost': totalCost,
+            'transaction_id': txnId,
+            'invoice_id': invoiceId,
+          })
+          ..createdAt = DateTime.now()
+          ..synced = false);
       }
 
       // Calculate total COGS for this sale
@@ -241,9 +294,24 @@ class SalesDao {
         transaction.totalAmount =
             lines.fold(0.0, (sum, l) => sum + (l.qty * l.rate));
         await isar.transactions.put(transaction);
+        await isar.syncChanges.put(SyncChange()
+          ..companyId = companyId
+          ..table = 'transactions'
+          ..operation = ChangeOperation.update
+          ..recordId = transactionId
+          ..data = jsonEncode({
+            'id': transactionId,
+            'company_id': companyId,
+            'type': 'sale',
+            'date': date.toIso8601String(),
+            'reference_no': referenceNo,
+            'party_id': customer.id,
+            'total_amount': transaction.totalAmount,
+            'is_posted': transaction.isPosted,
+          })
+          ..createdAt = DateTime.now()
+          ..synced = false);
       }
-
-      // Calculate customer's current balance BEFORE this invoice
       // We need to exclude this invoice's effect and recalculate
       final currentBalance = await _partyDao.getPartyBalance(
         partyId: customer.id,
@@ -304,6 +372,14 @@ class SalesDao {
 
       for (final oldLine in oldLines) {
         await isar.transactionLines.delete(oldLine.id);
+        await isar.syncChanges.put(SyncChange()
+          ..companyId = companyId
+          ..table = 'transaction_lines'
+          ..operation = ChangeOperation.delete
+          ..recordId = oldLine.id
+          ..data = jsonEncode({'id': oldLine.id})
+          ..createdAt = DateTime.now()
+          ..synced = false);
       }
 
       final oldStocks = await isar.stockLedgers
@@ -313,6 +389,14 @@ class SalesDao {
 
       for (final oldStock in oldStocks) {
         await isar.stockLedgers.delete(oldStock.id);
+        await isar.syncChanges.put(SyncChange()
+          ..companyId = companyId
+          ..table = 'stock_ledgers'
+          ..operation = ChangeOperation.delete
+          ..recordId = oldStock.id
+          ..data = jsonEncode({'id': oldStock.id})
+          ..createdAt = DateTime.now()
+          ..synced = false);
       }
 
       // Create new transaction lines and stock ledger entries
@@ -324,7 +408,22 @@ class SalesDao {
           ..unitPrice = l.rate
           ..lineAmount = l.qty * l.rate;
 
-        await isar.transactionLines.put(line);
+        final lineId = await isar.transactionLines.put(line);
+        await isar.syncChanges.put(SyncChange()
+          ..companyId = companyId
+          ..table = 'transaction_lines'
+          ..operation = ChangeOperation.create
+          ..recordId = lineId
+          ..data = jsonEncode({
+            'id': lineId,
+            'transaction_id': transactionId,
+            'product_id': l.productId,
+            'quantity': l.qty,
+            'unit_price': l.rate,
+            'line_amount': l.qty * l.rate,
+          })
+          ..createdAt = DateTime.now()
+          ..synced = false);
 
         // Calculate COGS using weighted average cost
         final avgCost = await _calculateAverageCost(companyId, l.productId);
@@ -342,7 +441,26 @@ class SalesDao {
           ..transactionId = transactionId
           ..invoiceId = invoiceId;
 
-        await isar.stockLedgers.put(stock);
+        final stockId = await isar.stockLedgers.put(stock);
+        await isar.syncChanges.put(SyncChange()
+          ..companyId = companyId
+          ..table = 'stock_ledgers'
+          ..operation = ChangeOperation.create
+          ..recordId = stockId
+          ..data = jsonEncode({
+            'id': stockId,
+            'company_id': companyId,
+            'product_id': l.productId,
+            'date': date.toIso8601String(),
+            'movement_type': 'outSale',
+            'quantity_delta': -l.qty,
+            'unit_cost': unitCost,
+            'total_cost': totalCost,
+            'transaction_id': transactionId,
+            'invoice_id': invoiceId,
+          })
+          ..createdAt = DateTime.now()
+          ..synced = false);
       }
 
       // Delete ALL old accounting transactions related to this invoice
@@ -443,6 +561,14 @@ class SalesDao {
 
       for (final stock in stocks) {
         await isar.stockLedgers.delete(stock.id);
+        await isar.syncChanges.put(SyncChange()
+          ..companyId = invoice.companyId
+          ..table = 'stock_ledgers'
+          ..operation = ChangeOperation.delete
+          ..recordId = stock.id
+          ..data = jsonEncode({'id': stock.id})
+          ..createdAt = DateTime.now()
+          ..synced = false);
       }
 
       // Delete transaction lines
@@ -453,10 +579,26 @@ class SalesDao {
 
       for (final line in lines) {
         await isar.transactionLines.delete(line.id);
+        await isar.syncChanges.put(SyncChange()
+          ..companyId = invoice.companyId
+          ..table = 'transaction_lines'
+          ..operation = ChangeOperation.delete
+          ..recordId = line.id
+          ..data = jsonEncode({'id': line.id})
+          ..createdAt = DateTime.now()
+          ..synced = false);
       }
 
       // Delete transaction
       await isar.transactions.delete(invoice.transactionId);
+      await isar.syncChanges.put(SyncChange()
+        ..companyId = invoice.companyId
+        ..table = 'transactions'
+        ..operation = ChangeOperation.delete
+        ..recordId = invoice.transactionId
+        ..data = jsonEncode({'id': invoice.transactionId})
+        ..createdAt = DateTime.now()
+        ..synced = false);
 
       // Delete invoice
       await isar.invoices.delete(invoiceId);
@@ -541,6 +683,25 @@ class SalesDao {
 
       final returnTxnId = await isar.transactions.put(returnTransaction);
 
+      // Record sync change for return transaction
+      await isar.syncChanges.put(SyncChange()
+        ..companyId = companyId
+        ..table = 'transactions'
+        ..operation = ChangeOperation.create
+        ..recordId = returnTxnId
+        ..data = jsonEncode({
+          'id': returnTxnId,
+          'company_id': companyId,
+          'type': 'saleReturn',
+          'date': returnDate.toIso8601String(),
+          'reference_no': returnNo,
+          'party_id': customer.id,
+          'total_amount': totalAmount,
+          'is_posted': false,
+        })
+        ..createdAt = DateTime.now()
+        ..synced = false);
+
       // Create return invoice
       final returnInvoice = Invoice()
         ..companyId = companyId
@@ -553,6 +714,28 @@ class SalesDao {
 
       returnInvoiceId = await isar.invoices.put(returnInvoice);
 
+      // Record sync change for return invoice
+      await isar.syncChanges.put(SyncChange()
+        ..companyId = companyId
+        ..table = 'invoices'
+        ..operation = ChangeOperation.create
+        ..recordId = returnInvoiceId
+        ..data = jsonEncode({
+          'id': returnInvoiceId,
+          'company_id': companyId,
+          'transaction_id': returnTxnId,
+          'invoice_type': 'sale',
+          'party_id': customer.id,
+          'invoice_date': returnDate.toIso8601String(),
+          'grand_total': totalAmount,
+          'status': 'Return',
+          'previous_balance': 0.0,
+          'paid_amount': 0.0,
+          'remaining_balance': totalAmount,
+        })
+        ..createdAt = DateTime.now()
+        ..synced = false);
+
       // Create return lines
       for (final returnLine in returnLines) {
         final line = TransactionLine()
@@ -562,7 +745,22 @@ class SalesDao {
           ..unitPrice = returnLine.rate
           ..lineAmount = -(returnLine.qty * returnLine.rate);
 
-        await isar.transactionLines.put(line);
+        final lineId = await isar.transactionLines.put(line);
+        await isar.syncChanges.put(SyncChange()
+          ..companyId = companyId
+          ..table = 'transaction_lines'
+          ..operation = ChangeOperation.create
+          ..recordId = lineId
+          ..data = jsonEncode({
+            'id': lineId,
+            'transaction_id': returnTxnId,
+            'product_id': returnLine.productId,
+            'quantity': -returnLine.qty,
+            'unit_price': returnLine.rate,
+            'line_amount': -(returnLine.qty * returnLine.rate),
+          })
+          ..createdAt = DateTime.now()
+          ..synced = false);
 
         // Get average cost for COGS reversal
         final avgCost =
@@ -583,7 +781,26 @@ class SalesDao {
           ..transactionId = returnTxnId
           ..invoiceId = returnInvoiceId;
 
-        await isar.stockLedgers.put(stock);
+        final stockId = await isar.stockLedgers.put(stock);
+        await isar.syncChanges.put(SyncChange()
+          ..companyId = companyId
+          ..table = 'stock_ledgers'
+          ..operation = ChangeOperation.create
+          ..recordId = stockId
+          ..data = jsonEncode({
+            'id': stockId,
+            'company_id': companyId,
+            'product_id': returnLine.productId,
+            'date': returnDate.toIso8601String(),
+            'movement_type': 'inAdjustment',
+            'quantity_delta': returnLine.qty,
+            'unit_cost': unitCost,
+            'total_cost': totalCost,
+            'transaction_id': returnTxnId,
+            'invoice_id': returnInvoiceId,
+          })
+          ..createdAt = DateTime.now()
+          ..synced = false);
       }
 
       // Calculate total COGS to reverse

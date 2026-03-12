@@ -1,6 +1,9 @@
+import 'dart:convert';
+
 import 'package:isar/isar.dart';
 
 import '../../../data/models/account_models.dart';
+import '../../../data/models/sync_change_model.dart';
 
 class AccountDao {
   final Isar isar;
@@ -272,6 +275,8 @@ class AccountDao {
 
     await isar.accountTransactions.put(arTransaction);
     await isar.accounts.put(accountsReceivable);
+    await _syncAccountTxnCreate(arTransaction, companyId);
+    await _syncAccountUpdate(accountsReceivable);
 
     // Credit Sales Revenue (increase revenue)
     final revenueTransaction = AccountTransaction()
@@ -291,6 +296,8 @@ class AccountDao {
 
     await isar.accountTransactions.put(revenueTransaction);
     await isar.accounts.put(salesRevenue);
+    await _syncAccountTxnCreate(revenueTransaction, companyId);
+    await _syncAccountUpdate(salesRevenue);
   }
 
   // Internal method - records payment received on sale invoice (within transaction)
@@ -339,6 +346,8 @@ class AccountDao {
 
     await isar.accountTransactions.put(cashTransaction);
     await isar.accounts.put(cashBankAccount);
+    await _syncAccountTxnCreate(cashTransaction, companyId);
+    await _syncAccountUpdate(cashBankAccount);
 
     // Credit Accounts Receivable (decrease asset)
     final arTransaction = AccountTransaction()
@@ -358,6 +367,8 @@ class AccountDao {
 
     await isar.accountTransactions.put(arTransaction);
     await isar.accounts.put(accountsReceivable);
+    await _syncAccountTxnCreate(arTransaction, companyId);
+    await _syncAccountUpdate(accountsReceivable);
   }
 
   // Public method - creates its own transaction
@@ -429,6 +440,8 @@ class AccountDao {
 
     await isar.accountTransactions.put(cashTransaction);
     await isar.accounts.put(cashBankAccount);
+    await _syncAccountTxnCreate(cashTransaction, companyId);
+    await _syncAccountUpdate(cashBankAccount);
 
     // Credit Accounts Receivable (decrease asset)
     final arTransaction = AccountTransaction()
@@ -448,6 +461,8 @@ class AccountDao {
 
     await isar.accountTransactions.put(arTransaction);
     await isar.accounts.put(accountsReceivable);
+    await _syncAccountTxnCreate(arTransaction, companyId);
+    await _syncAccountUpdate(accountsReceivable);
   }
 
   // Public method - creates its own transaction
@@ -623,8 +638,10 @@ class AccountDao {
         // Reverse the transaction
         account.currentBalance -= (txn.debit - txn.credit);
         await isar.accounts.put(account);
+        await _syncAccountUpdate(account);
       }
       await isar.accountTransactions.delete(txn.id);
+      await _syncAccountTxnDelete(txn);
     }
   }
 
@@ -649,8 +666,10 @@ class AccountDao {
         // Reverse the transaction
         account.currentBalance -= (txn.debit - txn.credit);
         await isar.accounts.put(account);
+        await _syncAccountUpdate(account);
       }
       await isar.accountTransactions.delete(txn.id);
+      await _syncAccountTxnDelete(txn);
     }
   }
 
@@ -731,6 +750,77 @@ class AccountDao {
     return await isar.accounts.filter().companyIdEqualTo(companyId).findAll();
   }
 
+  Future<void> _syncAccountTxnCreate(
+      AccountTransaction accountTransaction, int companyId) async {
+    final syncChange = SyncChange()
+      ..companyId = companyId
+      ..table = 'account_transactions'
+      ..operation = ChangeOperation.create
+      ..recordId = accountTransaction.id
+      ..data = jsonEncode({
+        'id': accountTransaction.id,
+        'company_id': accountTransaction.companyId,
+        'account_id': accountTransaction.accountId,
+        'transaction_type': accountTransaction.transactionType.name,
+        'reference_id': accountTransaction.referenceId,
+        'transaction_date':
+            accountTransaction.transactionDate.toIso8601String(),
+        'description': accountTransaction.description,
+        'debit': accountTransaction.debit,
+        'credit': accountTransaction.credit,
+        'running_balance': accountTransaction.runningBalance,
+        'reference_no': accountTransaction.referenceNo,
+        'party_id': accountTransaction.partyId,
+      })
+      ..createdAt = DateTime.now()
+      ..synced = false
+      ..deviceId = 'local';
+
+    await isar.syncChanges.put(syncChange);
+  }
+
+  Future<void> _syncAccountTxnDelete(
+      AccountTransaction accountTransaction) async {
+    final syncChange = SyncChange()
+      ..companyId = accountTransaction.companyId
+      ..table = 'account_transactions'
+      ..operation = ChangeOperation.delete
+      ..recordId = accountTransaction.id
+      ..data = jsonEncode({'id': accountTransaction.id})
+      ..createdAt = DateTime.now()
+      ..synced = false
+      ..deviceId = 'local';
+
+    await isar.syncChanges.put(syncChange);
+  }
+
+  Future<void> _syncAccountUpdate(Account account) async {
+    final syncChange = SyncChange()
+      ..companyId = account.companyId
+      ..table = 'accounts'
+      ..operation = ChangeOperation.update
+      ..recordId = account.id
+      ..data = jsonEncode({
+        'id': account.id,
+        'company_id': account.companyId,
+        'name': account.name,
+        'code': account.code,
+        'account_type': account.accountType.name,
+        'parent_account_id': account.parentAccountId,
+        'description': account.description,
+        'is_system': account.isSystem,
+        'opening_balance': account.openingBalance,
+        'current_balance': account.currentBalance,
+        'is_active': account.isActive,
+        'created_at': account.createdAt.toIso8601String(),
+      })
+      ..createdAt = DateTime.now()
+      ..synced = false
+      ..deviceId = 'local';
+
+    await isar.syncChanges.put(syncChange);
+  }
+
   // ========== PURCHASE ACCOUNTING METHODS ==========
 
   // Internal method - records purchase invoice (within transaction)
@@ -779,6 +869,8 @@ class AccountDao {
 
     await isar.accountTransactions.put(expenseTransaction);
     await isar.accounts.put(purchaseExpense);
+    await _syncAccountTxnCreate(expenseTransaction, companyId);
+    await _syncAccountUpdate(purchaseExpense);
 
     // Credit Accounts Payable (increase liability)
     final apTransaction = AccountTransaction()
@@ -798,6 +890,8 @@ class AccountDao {
 
     await isar.accountTransactions.put(apTransaction);
     await isar.accounts.put(accountsPayable);
+    await _syncAccountTxnCreate(apTransaction, companyId);
+    await _syncAccountUpdate(accountsPayable);
   }
 
   // Internal method - records payment made on purchase invoice (within transaction)
@@ -846,6 +940,8 @@ class AccountDao {
 
     await isar.accountTransactions.put(cashTransaction);
     await isar.accounts.put(cashBankAccount);
+    await _syncAccountTxnCreate(cashTransaction, companyId);
+    await _syncAccountUpdate(cashBankAccount);
 
     // Debit Accounts Payable (decrease liability)
     final apTransaction = AccountTransaction()
@@ -865,6 +961,8 @@ class AccountDao {
 
     await isar.accountTransactions.put(apTransaction);
     await isar.accounts.put(accountsPayable);
+    await _syncAccountTxnCreate(apTransaction, companyId);
+    await _syncAccountUpdate(accountsPayable);
   }
 
   // Delete all accounting transactions related to purchase invoice (internal)
@@ -884,9 +982,11 @@ class AccountDao {
         // Reverse the transaction: subtract (debit - credit)
         account.currentBalance -= (transaction.debit - transaction.credit);
         await isar.accounts.put(account);
+        await _syncAccountUpdate(account);
       }
 
       await isar.accountTransactions.delete(transaction.id);
+      await _syncAccountTxnDelete(transaction);
     }
   }
 
@@ -967,6 +1067,8 @@ class AccountDao {
 
     await isar.accountTransactions.put(cashTransaction);
     await isar.accounts.put(cashBankAccount);
+    await _syncAccountTxnCreate(cashTransaction, companyId);
+    await _syncAccountUpdate(cashBankAccount);
 
     // Debit Accounts Payable (decrease liability)
     final apTransaction = AccountTransaction()
@@ -986,6 +1088,8 @@ class AccountDao {
 
     await isar.accountTransactions.put(apTransaction);
     await isar.accounts.put(accountsPayable);
+    await _syncAccountTxnCreate(apTransaction, companyId);
+    await _syncAccountUpdate(accountsPayable);
   }
 
   // Delete all accounting transactions related to payment out (internal)
@@ -1003,9 +1107,11 @@ class AccountDao {
         // Reverse the transaction: subtract (debit - credit)
         account.currentBalance -= (transaction.debit - transaction.credit);
         await isar.accounts.put(account);
+        await _syncAccountUpdate(account);
       }
 
       await isar.accountTransactions.delete(transaction.id);
+      await _syncAccountTxnDelete(transaction);
     }
   }
 
@@ -1055,6 +1161,8 @@ class AccountDao {
     await isar.accountTransactions.put(expenseTransaction);
     expenseAccount.currentBalance += amount;
     await isar.accounts.put(expenseAccount);
+    await _syncAccountTxnCreate(expenseTransaction, companyId);
+    await _syncAccountUpdate(expenseAccount);
 
     // Credit Payment Account (reduce cash/bank)
     final paymentTransaction = AccountTransaction()
@@ -1072,6 +1180,8 @@ class AccountDao {
     await isar.accountTransactions.put(paymentTransaction);
     paymentAccount.currentBalance -= amount;
     await isar.accounts.put(paymentAccount);
+    await _syncAccountTxnCreate(paymentTransaction, companyId);
+    await _syncAccountUpdate(paymentAccount);
   }
 
   Future<void> deleteExpenseTransactionsInternal(int expenseId) async {
@@ -1087,9 +1197,11 @@ class AccountDao {
       if (account != null) {
         account.currentBalance -= (transaction.debit - transaction.credit);
         await isar.accounts.put(account);
+        await _syncAccountUpdate(account);
       }
 
       await isar.accountTransactions.delete(transaction.id);
+      await _syncAccountTxnDelete(transaction);
     }
   }
 
@@ -1133,6 +1245,8 @@ class AccountDao {
     await isar.accountTransactions.put(cogsTransaction);
     cogsAccount.currentBalance += cogsAmount;
     await isar.accounts.put(cogsAccount);
+    await _syncAccountTxnCreate(cogsTransaction, companyId);
+    await _syncAccountUpdate(cogsAccount);
 
     // Credit Inventory
     final inventoryTransaction = AccountTransaction()
@@ -1150,6 +1264,8 @@ class AccountDao {
     await isar.accountTransactions.put(inventoryTransaction);
     inventoryAccount.currentBalance -= cogsAmount;
     await isar.accounts.put(inventoryAccount);
+    await _syncAccountTxnCreate(inventoryTransaction, companyId);
+    await _syncAccountUpdate(inventoryAccount);
   }
 
   // Sale Return accounting
@@ -1194,6 +1310,8 @@ class AccountDao {
     await isar.accountTransactions.put(arTransaction);
     arAccount.currentBalance -= returnAmount;
     await isar.accounts.put(arAccount);
+    await _syncAccountTxnCreate(arTransaction, companyId);
+    await _syncAccountUpdate(arAccount);
 
     // Debit Sales Returns (reduce revenue)
     final salesTransaction = AccountTransaction()
@@ -1211,6 +1329,8 @@ class AccountDao {
     await isar.accountTransactions.put(salesTransaction);
     salesReturnAccount.currentBalance -= returnAmount;
     await isar.accounts.put(salesReturnAccount);
+    await _syncAccountTxnCreate(salesTransaction, companyId);
+    await _syncAccountUpdate(salesReturnAccount);
   }
 
   Future<void> recordCOGSReversalInternal({
@@ -1251,6 +1371,8 @@ class AccountDao {
     await isar.accountTransactions.put(cogsTransaction);
     cogsAccount.currentBalance -= cogsReversalAmount;
     await isar.accounts.put(cogsAccount);
+    await _syncAccountTxnCreate(cogsTransaction, companyId);
+    await _syncAccountUpdate(cogsAccount);
 
     // Debit Inventory (restore inventory value)
     final inventoryTransaction = AccountTransaction()
@@ -1268,6 +1390,8 @@ class AccountDao {
     await isar.accountTransactions.put(inventoryTransaction);
     inventoryAccount.currentBalance += cogsReversalAmount;
     await isar.accounts.put(inventoryAccount);
+    await _syncAccountTxnCreate(inventoryTransaction, companyId);
+    await _syncAccountUpdate(inventoryAccount);
   }
 
   Future<void> deleteSaleReturnTransactionsInternal(int returnInvoiceId) async {
@@ -1281,8 +1405,10 @@ class AccountDao {
       if (account != null) {
         account.currentBalance -= (transaction.debit - transaction.credit);
         await isar.accounts.put(account);
+        await _syncAccountUpdate(account);
       }
       await isar.accountTransactions.delete(transaction.id);
+      await _syncAccountTxnDelete(transaction);
     }
   }
 
@@ -1328,6 +1454,8 @@ class AccountDao {
     await isar.accountTransactions.put(apTransaction);
     apAccount.currentBalance -= returnAmount;
     await isar.accounts.put(apAccount);
+    await _syncAccountTxnCreate(apTransaction, companyId);
+    await _syncAccountUpdate(apAccount);
 
     // Credit Inventory (reduce inventory value)
     final inventoryTransaction = AccountTransaction()
@@ -1345,6 +1473,8 @@ class AccountDao {
     await isar.accountTransactions.put(inventoryTransaction);
     inventoryAccount.currentBalance -= returnAmount;
     await isar.accounts.put(inventoryAccount);
+    await _syncAccountTxnCreate(inventoryTransaction, companyId);
+    await _syncAccountUpdate(inventoryAccount);
   }
 
   Future<void> deletePurchaseReturnTransactionsInternal(
@@ -1359,8 +1489,10 @@ class AccountDao {
       if (account != null) {
         account.currentBalance -= (transaction.debit - transaction.credit);
         await isar.accounts.put(account);
+        await _syncAccountUpdate(account);
       }
       await isar.accountTransactions.delete(transaction.id);
+      await _syncAccountTxnDelete(transaction);
     }
   }
 }

@@ -118,3 +118,12 @@ desktop.ini
 *.log
 *.tmp
 *.bak
+
+# Local test scratch outputs
+.tmp_test_output.txt
+.tmp_test_output2.txt
+
+# Deployment / secrets artifacts (do not commit)
+laravel_sync/.env.production
+laravel_sync/setup_production.sh
+laravel_sync_deploy.zip

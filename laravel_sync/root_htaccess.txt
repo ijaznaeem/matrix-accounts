@@ -1,0 +1,14 @@
+<IfModule mod_rewrite.c>
+    Options -MultiViews -Indexes
+    RewriteEngine On
+
+    # Pass Authorization header to PHP
+    RewriteCond %{HTTP:Authorization} .
+    RewriteRule .* - [E=HTTP_AUTHORIZATION:%{HTTP:Authorization}]
+
+    # If request is already inside public/, serve directly
+    RewriteRule ^public/ - [L]
+
+    # Route everything else through public/
+    RewriteRule ^(.*)$ public/$1 [L,QSA]
+</IfModule>

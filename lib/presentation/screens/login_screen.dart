@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../core/config/providers.dart';
+import '../../core/providers/sync_providers.dart';
 import '../../data/models/user_model.dart';
 
 class LoginScreen extends ConsumerStatefulWidget {
@@ -14,8 +15,8 @@ class LoginScreen extends ConsumerStatefulWidget {
 
 class _LoginScreenState extends ConsumerState<LoginScreen> {
   final _formKey = GlobalKey<FormState>();
-  final _emailController = TextEditingController(text: 'admin@matrix.com');
-  final _passwordController = TextEditingController(text: 'admin123');
+  final _emailController = TextEditingController(text: 'admin@veyo.com');
+  final _passwordController = TextEditingController(text: 'password123');
   bool _isPasswordVisible = false;
   bool _isLoading = false;
 
@@ -35,33 +36,54 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
 
     try {
       final authService = ref.read(authServiceProvider);
-
-      // For demo purposes, accept any email/password
-      // In production, you would validate credentials here
+      final apiClient = ref.read(apiClientProvider);
       final email = _emailController.text.trim();
+      final password = _passwordController.text;
+
+      // Try API login first (for sync support)
+      bool apiLoginSuccess = false;
+      try {
+        final response = await apiClient.post('/api/auth/login', {
+          'email': email,
+          'password': password,
+        });
+        if (response['success'] == true && response['token'] != null) {
+          // Store auth token for sync
+          await apiClient.prefs.setString('auth_token', response['token']);
+          apiLoginSuccess = true;
+        }
+      } catch (_) {
+        // API unavailable (offline mode) — continue with local login
+      }
+
       final fullName =
           email.split('@').first.replaceAll('.', ' ').toUpperCase();
 
-      // Create user object
       final user = User()
         ..email = email
         ..fullName = fullName
         ..passwordHash = ''
         ..isActive = true;
 
-      // Save login state
       final saved = await authService.saveLoginState(
-        userId: 1, // In production, this would come from authentication
+        userId: 1,
         email: email,
         fullName: fullName,
       );
 
       if (saved) {
-        // Update current user provider
         ref.read(currentUserProvider.notifier).state = user;
 
-        // Navigate to company selection
         if (mounted) {
+          if (!apiLoginSuccess) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(
+                content: Text(
+                    'Logged in offline — sync requires internet connection'),
+                duration: Duration(seconds: 2),
+              ),
+            );
+          }
           context.go('/company');
         }
       } else {
@@ -239,7 +261,7 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                           ),
                           const SizedBox(height: 16),
 
-                          // Demo hint
+                          // Info hint
                           Container(
                             padding: const EdgeInsets.all(12),
                             decoration: BoxDecoration(
@@ -248,7 +270,7 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                               borderRadius: BorderRadius.circular(8),
                             ),
                             child: Text(
-                              'Demo Mode: Use any email and password (min 6 chars)',
+                              'Use your server credentials for sync, or any email/password (min 6 chars) for offline mode',
                               textAlign: TextAlign.center,
                               style: theme.textTheme.bodySmall?.copyWith(
                                 color: colorScheme.onPrimaryContainer,

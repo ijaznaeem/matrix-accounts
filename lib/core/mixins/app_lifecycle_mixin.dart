@@ -2,7 +2,10 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
+import '../config/app_config.dart';
 import '../config/providers.dart';
+import '../providers/connectivity_provider.dart';
+import '../providers/sync_providers.dart';
 import '../services/biometric_service.dart';
 import '../utils/debug_utils.dart';
 
@@ -60,6 +63,11 @@ mixin AppLifecycleMixin<T extends ConsumerStatefulWidget>
   }
 
   Future<void> _handleAppResumed(BiometricService biometricService) async {
+    // Trigger auto-sync on resume if enabled, online, and company selected
+    if (_wasInBackground && AppConfig.autoSync) {
+      _triggerAutoSyncIfNeeded();
+    }
+
     if (!_wasInBackground || !biometricService.isBiometricEnabled) {
       DebugUtils.logLifecycleEvent('Skipping auto-lock check',
           context: 'Not from background or biometric disabled');
@@ -114,6 +122,19 @@ mixin AppLifecycleMixin<T extends ConsumerStatefulWidget>
       }
     } else {
       DebugUtils.logLifecycleEvent('Auto-lock not required');
+    }
+  }
+
+  void _triggerAutoSyncIfNeeded() {
+    try {
+      final company = ref.read(currentCompanyProvider);
+      final isOnline = ref.read(isOnlineProvider);
+      if (isOnline && company != null) {
+        DebugUtils.logLifecycleEvent('Auto-sync triggered on app resume');
+        ref.read(syncStateProvider.notifier).performSync(company.id);
+      }
+    } catch (_) {
+      // syncStateProvider may not be initialised yet — safe to ignore
     }
   }
 }

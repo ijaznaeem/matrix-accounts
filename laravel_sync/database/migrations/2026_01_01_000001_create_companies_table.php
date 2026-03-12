@@ -10,7 +10,7 @@ return new class extends Migration
     {
         Schema::create('companies', function (Blueprint $table) {
             $table->id();
-            $table->integer('subscriber_id');
+            $table->integer('subscriber_id')->nullable();
             $table->string('name')->unique();
             $table->string('primary_currency', 10)->nullable();
             $table->integer('financial_year_start_month')->nullable();

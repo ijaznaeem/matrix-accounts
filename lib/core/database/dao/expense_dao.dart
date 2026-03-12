@@ -1,6 +1,9 @@
+import 'dart:convert';
+
 import 'package:isar/isar.dart';
 
 import '../../../data/models/payment_models.dart';
+import '../../../data/models/sync_change_model.dart';
 import '../../../data/models/transaction_model.dart';
 import 'account_dao.dart';
 
@@ -55,6 +58,23 @@ class ExpenseDao {
         ..createdByUserId = userId;
 
       final expenseId = await isar.transactions.put(transaction);
+      await isar.syncChanges.put(SyncChange()
+        ..companyId = companyId
+        ..table = 'transactions'
+        ..operation = ChangeOperation.create
+        ..recordId = expenseId
+        ..data = jsonEncode({
+          'id': expenseId,
+          'company_id': companyId,
+          'type': TransactionType.expense.name,
+          'date': date.toIso8601String(),
+          'reference_no': referenceNo,
+          'party_id': null,
+          'total_amount': totalAmount,
+          'is_posted': false,
+        })
+        ..createdAt = DateTime.now()
+        ..synced = false);
 
       // Create transaction lines
       for (final line in lines) {
@@ -66,7 +86,24 @@ class ExpenseDao {
           ..unitPrice = line.rate
           ..lineAmount = line.amount;
 
-        await isar.transactionLines.put(transactionLine);
+        final lineId = await isar.transactionLines.put(transactionLine);
+        await isar.syncChanges.put(SyncChange()
+          ..companyId = companyId
+          ..table = 'transaction_lines'
+          ..operation = ChangeOperation.create
+          ..recordId = lineId
+          ..data = jsonEncode({
+            'id': lineId,
+            'transaction_id': expenseId,
+            'product_id': null,
+            'expense_category_id': expenseAccountId,
+            'description': line.description,
+            'quantity': line.quantity,
+            'unit_price': line.rate,
+            'line_amount': line.amount,
+          })
+          ..createdAt = DateTime.now()
+          ..synced = false);
       }
 
       // Record accounting entries for each payment account
@@ -121,6 +158,23 @@ class ExpenseDao {
         transaction.referenceNo = referenceNo;
         transaction.totalAmount = totalAmount;
         await isar.transactions.put(transaction);
+        await isar.syncChanges.put(SyncChange()
+          ..companyId = companyId
+          ..table = 'transactions'
+          ..operation = ChangeOperation.update
+          ..recordId = expenseId
+          ..data = jsonEncode({
+            'id': expenseId,
+            'company_id': companyId,
+            'type': TransactionType.expense.name,
+            'date': date.toIso8601String(),
+            'reference_no': referenceNo,
+            'party_id': null,
+            'total_amount': totalAmount,
+            'is_posted': false,
+          })
+          ..createdAt = DateTime.now()
+          ..synced = false);
       }
 
       // Delete old transaction lines
@@ -130,6 +184,14 @@ class ExpenseDao {
           .findAll();
       for (final line in oldLines) {
         await isar.transactionLines.delete(line.id);
+        await isar.syncChanges.put(SyncChange()
+          ..companyId = companyId
+          ..table = 'transaction_lines'
+          ..operation = ChangeOperation.delete
+          ..recordId = line.id
+          ..data = jsonEncode({'id': line.id})
+          ..createdAt = DateTime.now()
+          ..synced = false);
       }
 
       // Create new transaction lines
@@ -142,7 +204,24 @@ class ExpenseDao {
           ..unitPrice = line.rate
           ..lineAmount = line.amount;
 
-        await isar.transactionLines.put(transactionLine);
+        final lineId = await isar.transactionLines.put(transactionLine);
+        await isar.syncChanges.put(SyncChange()
+          ..companyId = companyId
+          ..table = 'transaction_lines'
+          ..operation = ChangeOperation.create
+          ..recordId = lineId
+          ..data = jsonEncode({
+            'id': lineId,
+            'transaction_id': expenseId,
+            'product_id': null,
+            'expense_category_id': expenseAccountId,
+            'description': line.description,
+            'quantity': line.quantity,
+            'unit_price': line.rate,
+            'line_amount': line.amount,
+          })
+          ..createdAt = DateTime.now()
+          ..synced = false);
       }
 
       // Delete old accounting entries
@@ -180,6 +259,9 @@ class ExpenseDao {
 
   Future<void> deleteExpense(int expenseId) async {
     await isar.writeTxn(() async {
+      final expenseRecord = await isar.transactions.get(expenseId);
+      final companyId = expenseRecord?.companyId ?? 0;
+
       // Delete transaction lines
       final lines = await isar.transactionLines
           .filter()
@@ -187,6 +269,14 @@ class ExpenseDao {
           .findAll();
       for (final line in lines) {
         await isar.transactionLines.delete(line.id);
+        await isar.syncChanges.put(SyncChange()
+          ..companyId = companyId
+          ..table = 'transaction_lines'
+          ..operation = ChangeOperation.delete
+          ..recordId = line.id
+          ..data = jsonEncode({'id': line.id})
+          ..createdAt = DateTime.now()
+          ..synced = false);
       }
 
       // Delete accounting transactions
@@ -194,6 +284,14 @@ class ExpenseDao {
 
       // Delete expense record
       await isar.transactions.delete(expenseId);
+      await isar.syncChanges.put(SyncChange()
+        ..companyId = companyId
+        ..table = 'transactions'
+        ..operation = ChangeOperation.delete
+        ..recordId = expenseId
+        ..data = jsonEncode({'id': expenseId})
+        ..createdAt = DateTime.now()
+        ..synced = false);
     });
   }
 }

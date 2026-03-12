@@ -35,4 +35,45 @@ class ItemCategory extends Model
     {
         return $this->hasMany(ItemCategory::class, 'parent_category_id');
     }
+
+    protected static function boot()
+    {
+        parent::boot();
+
+        static::created(function ($cat) {
+            app(\App\Services\SyncService::class)->recordChange(
+                $cat->company_id,
+                auth()->id(),
+                request()->header('X-Device-Id'),
+                'item_categories',
+                $cat->id,
+                'INSERT',
+                $cat->toArray()
+            );
+        });
+
+        static::updated(function ($cat) {
+            app(\App\Services\SyncService::class)->recordChange(
+                $cat->company_id,
+                auth()->id(),
+                request()->header('X-Device-Id'),
+                'item_categories',
+                $cat->id,
+                'UPDATE',
+                $cat->toArray()
+            );
+        });
+
+        static::deleted(function ($cat) {
+            app(\App\Services\SyncService::class)->recordChange(
+                $cat->company_id,
+                auth()->id(),
+                request()->header('X-Device-Id'),
+                'item_categories',
+                $cat->id,
+                'DELETE',
+                ['id' => $cat->id]
+            );
+        });
+    }
 }

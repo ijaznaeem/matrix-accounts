@@ -3,14 +3,13 @@ import 'package:matrix_accounts/features/cash_in_hand.dart';
 import 'package:matrix_accounts/features/parties/presentation/party_form_screen.dart';
 import 'package:matrix_accounts/features/plans.dart';
 import 'package:matrix_accounts/features/profit_loss.dart';
+import 'package:matrix_accounts/features/purchases/presentation/purchase_return_form_screen.dart';
 import 'package:matrix_accounts/features/purchases/presentation/purchase_return_list_screen.dart'
     show PurchaseReturnListScreen;
-import 'package:matrix_accounts/features/purchases/presentation/purchase_return_form_screen.dart';
 import 'package:matrix_accounts/features/purchases/purchase_report.dart';
 import 'package:matrix_accounts/features/reports/presentation/account_ledger_screen.dart';
-
-import 'package:matrix_accounts/features/sales/presentation/sale_return_list_screen.dart';
 import 'package:matrix_accounts/features/sales/presentation/sale_return_form_screen.dart';
+import 'package:matrix_accounts/features/sales/presentation/sale_return_list_screen.dart';
 import 'package:matrix_accounts/features/settings/presentation/company_settings_screen.dart';
 import 'package:matrix_accounts/settings/about_settings_screen.dart';
 import 'package:matrix_accounts/settings/financial_year_settings_screen.dart';
@@ -24,6 +23,7 @@ import '../../features/companies/presentation/company_form_screen.dart';
 import '../../features/companies/presentation/company_list_screen.dart';
 import '../../features/expenses/presentation/expense_form_screen.dart';
 import '../../features/expenses/presentation/expense_list_screen.dart';
+import '../../features/inventory/presentation/category_list_screen.dart';
 import '../../features/inventory/presentation/product_list_screen.dart';
 import '../../features/parties/presentation/party_list_screen.dart';
 import '../../features/payments/presentation/payment_in_form_screen.dart';
@@ -159,6 +159,10 @@ GoRouter buildRouter() {
       GoRoute(
         path: '/masters/products',
         builder: (context, state) => const ProductListScreen(),
+      ),
+      GoRoute(
+        path: '/masters/categories',
+        builder: (context, state) => const CategoryListScreen(),
       ),
       GoRoute(
         path: '/reports/stock',

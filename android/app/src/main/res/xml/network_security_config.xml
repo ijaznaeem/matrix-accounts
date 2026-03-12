@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="utf-8"?>
+<network-security-config>
+
+    <!--
+        Production network security policy for Veyo Sync.
+        - All HTTPS traffic: trusted via system CAs only.
+        - Cleartext (HTTP) traffic: blocked everywhere in production.
+        - Debug builds get an override (see src/debug/res/xml/).
+    -->
+
+    <base-config cleartextTrafficPermitted="false">
+        <trust-anchors>
+            <certificates src="system"/>
+        </trust-anchors>
+    </base-config>
+
+    <!-- Explicitly pin production sync server to system CAs -->
+    <domain-config cleartextTrafficPermitted="false">
+        <domain includeSubdomains="true">veyo.octavions.com</domain>
+        <trust-anchors>
+            <certificates src="system"/>
+        </trust-anchors>
+    </domain-config>
+
+    <!-- WhatsApp Business API -->
+    <domain-config cleartextTrafficPermitted="false">
+        <domain includeSubdomains="true">api.whatsapp.business</domain>
+        <trust-anchors>
+            <certificates src="system"/>
+        </trust-anchors>
+    </domain-config>
+
+</network-security-config>

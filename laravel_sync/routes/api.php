@@ -39,7 +39,8 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::get('/auth/user',    [AuthController::class, 'user']);
 
     // ── Companies ─────────────────────────────────────
-    Route::get('/companies', [CompanyController::class, 'index']);
+    Route::get('/companies',  [CompanyController::class, 'index']);
+    Route::post('/companies', [CompanyController::class, 'store']);
 
     // ── Sync ──────────────────────────────────────────
     Route::prefix('sync')->group(function () {

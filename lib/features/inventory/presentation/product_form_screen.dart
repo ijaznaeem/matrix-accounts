@@ -6,6 +6,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../core/config/providers.dart';
 import '../../../data/models/inventory_models.dart';
 import '../logic/product_master_provider.dart';
+import 'category_list_screen.dart';
 
 class ProductFormScreen extends ConsumerStatefulWidget {
   final Product? product;
@@ -20,6 +21,7 @@ class _ProductFormScreenState extends ConsumerState<ProductFormScreen> {
   final _openingCtrl = TextEditingController();
 
   UnitOfMeasure? _uom;
+  ItemCategory? _category;
   bool _trackStock = true;
 
   @override
@@ -38,6 +40,7 @@ class _ProductFormScreenState extends ConsumerState<ProductFormScreen> {
 
   Future<void> _loadProductData(Product product) async {
     final unitAsync = ref.read(productUnitProvider);
+    final catAsync = ref.read(productCategoryProvider);
 
     unitAsync.whenData((units) {
       if (product.uomId != null) {
@@ -45,6 +48,14 @@ class _ProductFormScreenState extends ConsumerState<ProductFormScreen> {
           (unit) => unit.id == product.uomId,
           orElse: () => units.first,
         );
+      }
+    });
+
+    catAsync.whenData((cats) {
+      if (product.categoryId != null) {
+        try {
+          _category = cats.firstWhere((c) => c.id == product.categoryId);
+        } catch (_) {}
       }
     });
 
@@ -59,6 +70,7 @@ class _ProductFormScreenState extends ConsumerState<ProductFormScreen> {
     final dao = ref.read(productMasterDaoProvider);
 
     final unitAsync = ref.watch(productUnitProvider);
+    final catAsync = ref.watch(productCategoryProvider);
 
     return Scaffold(
       appBar: AppBar(
@@ -107,6 +119,47 @@ class _ProductFormScreenState extends ConsumerState<ProductFormScreen> {
               loading: () => const CircularProgressIndicator(),
               error: (_, __) => const Text('UOM error'),
             ),
+            const SizedBox(height: 16),
+            catAsync.when(
+              data: (cats) => DropdownButtonFormField<ItemCategory?>(
+                value: _category,
+                decoration: InputDecoration(
+                  labelText: 'Category (optional)',
+                  border: const OutlineInputBorder(),
+                  isDense: true,
+                  suffixIcon: IconButton(
+                    icon: const Icon(Icons.add_circle_outline,
+                        color: Colors.blueAccent),
+                    tooltip: 'Manage Categories',
+                    onPressed: () async {
+                      await Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                          builder: (_) => const CategoryListScreen(),
+                        ),
+                      );
+                      ref.invalidate(productCategoryProvider);
+                    },
+                  ),
+                ),
+                items: [
+                  const DropdownMenuItem<ItemCategory?>(
+                    value: null,
+                    child: Text('-- No Category --'),
+                  ),
+                  ...cats.map((c) => DropdownMenuItem<ItemCategory?>(
+                        value: c,
+                        child: Text(c.name),
+                      )),
+                ],
+                onChanged: (v) => setState(() => _category = v),
+              ),
+              loading: () => const SizedBox(
+                height: 48,
+                child: Center(child: CircularProgressIndicator(strokeWidth: 2)),
+              ),
+              error: (_, __) => const SizedBox.shrink(),
+            ),
             const SizedBox(height: 8),
             if (_trackStock) ...[
               _field(_openingCtrl, 'Opening Stock', isNumber: true),
@@ -135,12 +188,24 @@ class _ProductFormScreenState extends ConsumerState<ProductFormScreen> {
 
                   p.companyId = company.id;
                   p.name = _nameCtrl.text.trim();
-                  p.sku = '';
+                  // Generate a unique SKU for new products or empty SKU
+                  final currentSku = widget.product?.sku ?? '';
+                  if (currentSku.isEmpty) {
+                    final slug = p.name
+                        .toLowerCase()
+                        .replaceAll(RegExp(r'[^a-z0-9]'), '-')
+                        .replaceAll(RegExp(r'-+'), '-')
+                        .replaceAll(RegExp(r'^-|-$'), '');
+                    p.sku =
+                        '${company.id}-$slug-${DateTime.now().millisecondsSinceEpoch}';
+                  } else {
+                    p.sku = currentSku;
+                  }
                   p.salePrice = 0;
                   p.lastCost = 0;
                   p.isTracked = _trackStock;
                   p.openingQty = double.tryParse(_openingCtrl.text) ?? 0;
-                  p.categoryId = null;
+                  p.categoryId = _category?.id;
                   p.uomId = _uom?.id;
 
                   await dao.saveProduct(p);

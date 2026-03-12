@@ -51,5 +51,42 @@
 		<string>This app needs access to the photo library to select images for receipts.</string>
 		<key>UIStatusBarHidden</key>
 		<false/>
+
+		<!-- Network Security: App Transport Security -->
+		<key>NSAppTransportSecurity</key>
+		<dict>
+			<!-- Block all cleartext HTTP by default -->
+			<key>NSAllowsArbitraryLoads</key>
+			<false/>
+			<key>NSExceptionDomains</key>
+			<dict>
+				<!-- Sync API server -->
+				<key>veyo.octavions.com</key>
+				<dict>
+					<key>NSExceptionAllowsInsecureHTTPLoads</key>
+					<false/>
+					<key>NSIncludesSubdomains</key>
+					<true/>
+					<key>NSExceptionMinimumTLSVersion</key>
+					<string>TLSv1.2</string>
+				</dict>
+				<!-- WhatsApp Business API -->
+				<key>api.whatsapp.business</key>
+				<dict>
+					<key>NSExceptionAllowsInsecureHTTPLoads</key>
+					<false/>
+					<key>NSIncludesSubdomains</key>
+					<true/>
+					<key>NSExceptionMinimumTLSVersion</key>
+					<string>TLSv1.2</string>
+				</dict>
+				<!-- Localhost for debug/development -->
+				<key>localhost</key>
+				<dict>
+					<key>NSExceptionAllowsInsecureHTTPLoads</key>
+					<true/>
+				</dict>
+			</dict>
+		</dict>
 	</dict>
 </plist>

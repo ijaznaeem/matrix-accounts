@@ -33,7 +33,7 @@ class Product {
   late int companyId;
 
   @Index(caseSensitive: false)
-  late String sku;
+  String sku = '';
 
   @Index(caseSensitive: false)
   late String name;

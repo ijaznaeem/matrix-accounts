@@ -7,22 +7,22 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import 'core/config/providers.dart';
 import 'core/config/routes.dart';
-import 'core/providers/settings_provider.dart';
-import 'core/providers/sync_providers.dart';
-import 'core/services/auth_service.dart';
-import 'core/services/biometric_service.dart';
-import 'features/payments/logic/payment_providers.dart';
-import 'features/sales/logic/sales_providers.dart';
 import 'core/database/dao/account_dao.dart';
 import 'core/database/dao/payment_dao.dart';
 import 'core/database/dao/sales_dao.dart';
 import 'core/database/isar_service.dart';
-import 'core/mixins/app_lifecycle_mixin.dart';
 import 'core/database/seed_data.dart';
+import 'core/mixins/app_lifecycle_mixin.dart';
+import 'core/providers/connectivity_provider.dart';
+import 'core/providers/settings_provider.dart';
+import 'core/providers/sync_providers.dart';
+import 'core/services/auth_service.dart';
+import 'core/services/biometric_service.dart';
+import 'core/widgets/connectivity_banner.dart';
+import 'features/payments/logic/payment_providers.dart';
+import 'features/sales/logic/sales_providers.dart';
 
-void main() async {
-  WidgetsFlutterBinding.ensureInitialized();
-
+void main() {
   // Global error handling
   FlutterError.onError = (FlutterErrorDetails details) {
     FlutterError.presentError(details);
@@ -30,8 +30,9 @@ void main() async {
     print('Stack trace: ${details.stack}');
   };
 
-  // Add a global error zone
+  // WidgetsFlutterBinding must be initialized inside runZonedGuarded to avoid zone mismatch
   runZonedGuarded(() async {
+    WidgetsFlutterBinding.ensureInitialized();
     await _initializeAndRunApp();
   }, (error, stack) {
     print('Unhandled error: $error');
@@ -129,6 +130,16 @@ class _MatrixAccountsAppState extends ConsumerState<MatrixAccountsApp>
     final theme = ref.watch(themeProvider);
     final appLockState = ref.watch(appLockStateProvider);
 
+    // Auto-sync when connectivity is restored — must be in build() for ref.listen to work
+    ref.listen<bool>(isOnlineProvider, (wasOnline, isNowOnline) {
+      if (isNowOnline && wasOnline == false) {
+        final company = ref.read(currentCompanyProvider);
+        if (company != null) {
+          ref.read(syncStateProvider.notifier).performSync(company.id);
+        }
+      }
+    });
+
     // If app is locked and we're not on the lock screen, navigate to lock screen
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted && appLockState == AppLockState.locked) {
@@ -149,7 +160,9 @@ class _MatrixAccountsAppState extends ConsumerState<MatrixAccountsApp>
           data: MediaQuery.of(context).copyWith(
             textScaler: const TextScaler.linear(1.0),
           ),
-          child: child ?? Container(),
+          child: ConnectivityBanner(
+            child: child ?? Container(),
+          ),
         );
       },
     );

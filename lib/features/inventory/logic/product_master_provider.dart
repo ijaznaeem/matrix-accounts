@@ -16,7 +16,10 @@ final productListProvider = FutureProvider<List<Product>>((ref) async {
   return dao.getProductsByCompany(company.id);
 });
 
+final productCategoryRefreshProvider = StateProvider<int>((ref) => 0);
+
 final productCategoryProvider = FutureProvider<List<ItemCategory>>((ref) async {
+  ref.watch(productCategoryRefreshProvider);
   final company = ref.read(currentCompanyProvider);
   if (company == null) return [];
   final dao = ref.read(productMasterDaoProvider);

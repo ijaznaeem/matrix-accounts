@@ -9,6 +9,7 @@ import '../../../core/widgets/navigation_drawer_helper.dart';
 import '../../../data/models/inventory_models.dart';
 import '../../../data/models/invoice_stock_models.dart';
 import '../logic/product_master_provider.dart';
+import 'category_list_screen.dart';
 import 'product_form_screen.dart';
 
 class ProductListScreen extends ConsumerStatefulWidget {
@@ -32,6 +33,17 @@ class _ProductListScreenState extends ConsumerState<ProductListScreen> {
         title: const Text('Products'),
         elevation: 0,
         actions: [
+          IconButton(
+            icon: const Icon(Icons.category_outlined, color: Colors.white),
+            tooltip: 'Manage Categories',
+            onPressed: () {
+              Navigator.push(
+                context,
+                MaterialPageRoute(
+                    builder: (_) => const CategoryListScreen()),
+              );
+            },
+          ),
           if (company != null)
             Padding(
               padding: const EdgeInsets.only(right: 16),

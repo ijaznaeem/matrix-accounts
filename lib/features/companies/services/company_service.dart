@@ -1,5 +1,7 @@
 import 'package:isar/isar.dart';
 
+import '../../../core/database/dao/account_dao.dart';
+import '../../../core/database/dao/payment_dao.dart';
 import '../../../data/models/company_model.dart';
 
 /// Service for managing company data in Isar database
@@ -55,6 +57,10 @@ class CompanyService {
     await _isar.writeTxn(() async {
       await _isar.companys.put(company);
     });
+
+    // Seed chart of accounts and default payment accounts for the new company
+    await AccountDao(_isar).createDefaultAccounts(company.id);
+    await PaymentDao(_isar).createDefaultAccounts(company.id);
 
     return company;
   }

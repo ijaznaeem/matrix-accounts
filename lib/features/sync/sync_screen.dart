@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+
+import '../../core/config/app_config.dart';
 import '../../core/config/providers.dart';
 import '../../core/providers/sync_providers.dart';
 import '../../core/widgets/sync_button.dart';
@@ -18,10 +20,98 @@ class _SyncScreenState extends ConsumerState<SyncScreen> {
   int? _currentVersion;
   int? _pendingChanges;
 
+  // Server login state
+  bool _isLoggedIn = false;
+  bool _isLoggingIn = false;
+  String? _serverEmail;
+  final _emailController = TextEditingController();
+  final _passwordController = TextEditingController();
+  bool _passwordVisible = false;
+
   @override
   void initState() {
     super.initState();
     _loadSyncStatus();
+    _checkAuthStatus();
+  }
+
+  @override
+  void dispose() {
+    _emailController.dispose();
+    _passwordController.dispose();
+    super.dispose();
+  }
+
+  void _checkAuthStatus() {
+    final apiClient = ref.read(apiClientProvider);
+    setState(() {
+      _isLoggedIn = apiClient.token != null;
+      _serverEmail = apiClient.prefs.getString('server_email');
+    });
+  }
+
+  Future<void> _handleServerLogin() async {
+    final email = _emailController.text.trim();
+    final password = _passwordController.text;
+    if (email.isEmpty || password.isEmpty) return;
+
+    setState(() => _isLoggingIn = true);
+    try {
+      final apiClient = ref.read(apiClientProvider);
+      final response = await apiClient.post('/api/auth/login', {
+        'email': email,
+        'password': password,
+      });
+      if (response['success'] == true && response['token'] != null) {
+        await apiClient.prefs.setString('auth_token', response['token']);
+        await apiClient.prefs.setString('server_email', email);
+        setState(() {
+          _isLoggedIn = true;
+          _serverEmail = email;
+        });
+        _emailController.clear();
+        _passwordController.clear();
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Logged in to sync server successfully'),
+              backgroundColor: Colors.green,
+            ),
+          );
+          _loadSyncStatus();
+        }
+      } else {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text(response['message'] ?? 'Login failed'),
+              backgroundColor: Colors.red,
+            ),
+          );
+        }
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Cannot reach server: $e'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _isLoggingIn = false);
+    }
+  }
+
+  Future<void> _handleServerLogout() async {
+    final apiClient = ref.read(apiClientProvider);
+    await apiClient.prefs.remove('auth_token');
+    await apiClient.prefs.remove('server_email');
+    setState(() {
+      _isLoggedIn = false;
+      _serverEmail = null;
+    });
   }
 
   Future<void> _loadSyncStatus() async {
@@ -117,6 +207,138 @@ class _SyncScreenState extends ConsumerState<SyncScreen> {
                             _buildInfoRow(
                               'Last Sync',
                               _formatDateTime(syncState.lastSyncTime!),
+                            ),
+                          ],
+                          if (syncState.state == SyncState.error &&
+                              syncState.message != null) ...[
+                            const SizedBox(height: 12),
+                            const Divider(height: 1),
+                            const SizedBox(height: 12),
+                            Row(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                const Icon(Icons.error_outline,
+                                    color: Colors.red, size: 16),
+                                const SizedBox(width: 6),
+                                Expanded(
+                                  child: Text(
+                                    syncState.message!,
+                                    style: const TextStyle(
+                                        color: Colors.red, fontSize: 13),
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ],
+                        ],
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 16),
+
+                  // Server Authentication Card
+                  Card(
+                    child: Padding(
+                      padding: const EdgeInsets.all(16),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Row(
+                            children: [
+                              Icon(
+                                _isLoggedIn ? Icons.cloud_done : Icons.cloud_off,
+                                size: 20,
+                                color: _isLoggedIn ? Colors.green : Colors.orange,
+                              ),
+                              const SizedBox(width: 8),
+                              const Text(
+                                'Server Account',
+                                style: TextStyle(
+                                  fontSize: 18,
+                                  fontWeight: FontWeight.bold,
+                                ),
+                              ),
+                            ],
+                          ),
+                          const Divider(height: 24),
+                          if (_isLoggedIn) ...([
+                            Row(
+                              children: [
+                                const Icon(Icons.check_circle, color: Colors.green, size: 18),
+                                const SizedBox(width: 8),
+                                Expanded(
+                                  child: Text(
+                                    'Signed in as ${_serverEmail ?? 'Unknown'}',
+                                    style: const TextStyle(fontSize: 14),
+                                  ),
+                                ),
+                              ],
+                            ),
+                            const SizedBox(height: 12),
+                            SizedBox(
+                              width: double.infinity,
+                              child: OutlinedButton.icon(
+                                onPressed: _handleServerLogout,
+                                icon: const Icon(Icons.logout, size: 18),
+                                label: const Text('Sign Out from Server'),
+                                style: OutlinedButton.styleFrom(
+                                  foregroundColor: Colors.red,
+                                  side: const BorderSide(color: Colors.red),
+                                ),
+                              ),
+                            ),
+                          ]) else ...[
+                            Text(
+                              'Sign in with your server account to enable sync.\nServer: ${AppConfig.apiBaseUrl}',
+                              style: const TextStyle(color: Colors.grey, fontSize: 13),
+                            ),
+                            const SizedBox(height: 16),
+                            TextField(
+                              controller: _emailController,
+                              decoration: const InputDecoration(
+                                labelText: 'Email',
+                                prefixIcon: Icon(Icons.email_outlined),
+                                border: OutlineInputBorder(),
+                                isDense: true,
+                              ),
+                              keyboardType: TextInputType.emailAddress,
+                              textInputAction: TextInputAction.next,
+                            ),
+                            const SizedBox(height: 12),
+                            TextField(
+                              controller: _passwordController,
+                              decoration: InputDecoration(
+                                labelText: 'Password',
+                                prefixIcon: const Icon(Icons.lock_outline),
+                                border: const OutlineInputBorder(),
+                                isDense: true,
+                                suffixIcon: IconButton(
+                                  icon: Icon(_passwordVisible
+                                      ? Icons.visibility_off
+                                      : Icons.visibility),
+                                  onPressed: () => setState(
+                                      () => _passwordVisible = !_passwordVisible),
+                                ),
+                              ),
+                              obscureText: !_passwordVisible,
+                              textInputAction: TextInputAction.done,
+                              onSubmitted: (_) => _handleServerLogin(),
+                            ),
+                            const SizedBox(height: 12),
+                            SizedBox(
+                              width: double.infinity,
+                              child: FilledButton.icon(
+                                onPressed: _isLoggingIn ? null : _handleServerLogin,
+                                icon: _isLoggingIn
+                                    ? const SizedBox(
+                                        width: 16,
+                                        height: 16,
+                                        child: CircularProgressIndicator(
+                                            strokeWidth: 2, color: Colors.white),
+                                      )
+                                    : const Icon(Icons.login),
+                                label: Text(_isLoggingIn ? 'Signing in...' : 'Sign In to Server'),
+                              ),
                             ),
                           ],
                         ],

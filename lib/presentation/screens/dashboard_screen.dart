@@ -18,9 +18,11 @@ import 'package:matrix_accounts/features/reports/sale_report.dart'
     show SaleReportScreen;
 import 'package:matrix_accounts/features/sales/presentation/sale_invoice_list_screen.dart';
 import 'package:matrix_accounts/features/sales/presentation/sales_invoice_form_screen.dart';
+import 'package:matrix_accounts/features/sync/sync_screen.dart';
 import 'package:matrix_accounts/settings/settings_screen.dart';
 
 import '../../core/config/providers.dart';
+import '../../core/widgets/connectivity_banner.dart';
 import '../../core/widgets/navigation_drawer_helper.dart';
 
 // Provider for bottom navigation state
@@ -129,9 +131,31 @@ class DashboardScreen extends ConsumerWidget {
         selectedItem: 'dashboard',
       ),
       appBar: AppBar(
-        title: Text(company?.name ?? 'Dashboard'),
+        title: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Flexible(
+              child: Text(
+                company?.name ?? 'Dashboard',
+                overflow: TextOverflow.ellipsis,
+              ),
+            ),
+            const OnlineStatusChip(),
+          ],
+        ),
         elevation: 0,
         backgroundColor: Colors.blueAccent,
+        actions: [
+          SyncStatusAppBarIcon(
+            onTap: () => Navigator.push(
+              context,
+              MaterialPageRoute(
+                builder: (_) => const SyncScreen(),
+              ),
+            ),
+          ),
+          const SizedBox(width: 4),
+        ],
       ),
       body: SingleChildScrollView(
         padding: const EdgeInsets.all(16),

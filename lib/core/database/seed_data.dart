@@ -13,28 +13,12 @@ class SeedData {
   SeedData(this.isar);
 
   Future<void> seedAll({bool force = false}) async {
-    // Check if data already exists
-    final existingCompanies = await isar.companys.count();
-    if (existingCompanies > 0 && !force) {
-      print('Seed data already exists, skipping...');
+    // Only seed reference data (units of measure) if not already present
+    final existingUnits = await isar.unitOfMeasures.count();
+    if (existingUnits > 0 && !force) {
       return;
     }
-
-    if (force) {
-      print('Force seeding: Clearing existing data...');
-      await clearAllData();
-    }
-
-    print('Seeding database...');
-
     await _seedUnitsOfMeasure();
-    await _seedCompanies();
-    await _seedCustomers();
-    await _seedCategories();
-    await _seedProducts();
-    await _seedChartOfAccounts();
-
-    print('Seed data created successfully!');
   }
 
   Future<void> _seedUnitsOfMeasure() async {
@@ -62,27 +46,27 @@ class SeedData {
   Future<void> _seedCompanies() async {
     await isar.writeTxn(() async {
       final companies = [
-        Company()
-          ..subscriberId = 1
-          ..name = 'ABC Trading Co.'
-          ..primaryCurrency = 'INR'
-          ..financialYearStartMonth = 4
-          ..createdAt = DateTime.now()
-          ..isActive = true,
-        Company()
-          ..subscriberId = 1
-          ..name = 'XYZ Enterprises'
-          ..primaryCurrency = 'INR'
-          ..financialYearStartMonth = 4
-          ..createdAt = DateTime.now()
-          ..isActive = true,
-        Company()
-          ..subscriberId = 1
-          ..name = 'Demo Retail Store'
-          ..primaryCurrency = 'INR'
-          ..financialYearStartMonth = 4
-          ..createdAt = DateTime.now()
-          ..isActive = true,
+        // Company()
+        //   ..subscriberId = 1
+        //   ..name = 'ABC Trading Co.'
+        //   ..primaryCurrency = 'INR'
+        //   ..financialYearStartMonth = 4
+        //   ..createdAt = DateTime.now()
+        //   ..isActive = true,
+        // Company()
+        //   ..subscriberId = 1
+        //   ..name = 'XYZ Enterprises'
+        //   ..primaryCurrency = 'INR'
+        //   ..financialYearStartMonth = 4
+        //   ..createdAt = DateTime.now()
+        //   ..isActive = true,
+        // Company()
+        //   ..subscriberId = 1
+        //   ..name = 'Demo Retail Store'
+        //   ..primaryCurrency = 'INR'
+        //   ..financialYearStartMonth = 4
+        //   ..createdAt = DateTime.now()
+        //   ..isActive = true,
       ];
 
       for (final company in companies) {

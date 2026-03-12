@@ -37,4 +37,25 @@ class StockLedger extends Model
     {
         return $this->belongsTo(Product::class);
     }
+
+    protected static function boot()
+    {
+        parent::boot();
+
+        static::created(function ($entry) {
+            app(\App\Services\SyncService::class)->recordChange(
+                $entry->company_id, auth()->id(),
+                request()->header('X-Device-Id'),
+                'stock_ledgers', $entry->id, 'INSERT', $entry->toArray()
+            );
+        });
+
+        static::updated(function ($entry) {
+            app(\App\Services\SyncService::class)->recordChange(
+                $entry->company_id, auth()->id(),
+                request()->header('X-Device-Id'),
+                'stock_ledgers', $entry->id, 'UPDATE', $entry->toArray()
+            );
+        });
+    }
 }

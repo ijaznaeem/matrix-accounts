@@ -1,16 +1,12 @@
 import 'dart:io';
-import 'dart:convert';
 import 'package:flutter/services.dart';
 import 'package:share_plus/share_plus.dart';
-import 'package:http/http.dart' as http;
 import 'package:url_launcher/url_launcher.dart';
 import '../config/whatsapp_config.dart';
 
 /// Service for WhatsApp integration and sharing functionality
 class WhatsAppService {
   // WhatsApp URL schemes for different platforms
-  static const String _whatsappUrlScheme = 'whatsapp://';
-  static const String _whatsappWebUrl = 'https://web.whatsapp.com/';
   static const String _whatsappApiUrl = 'https://api.whatsapp.com/';
 
   /// Check if WhatsApp is installed on the device

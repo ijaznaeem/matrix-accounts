@@ -39,4 +39,25 @@ class AccountTransaction extends Model
     {
         return $this->belongsTo(Account::class);
     }
+
+    protected static function boot()
+    {
+        parent::boot();
+
+        static::created(function ($entry) {
+            app(\App\Services\SyncService::class)->recordChange(
+                $entry->company_id, auth()->id(),
+                request()->header('X-Device-Id'),
+                'account_transactions', $entry->id, 'INSERT', $entry->toArray()
+            );
+        });
+
+        static::updated(function ($entry) {
+            app(\App\Services\SyncService::class)->recordChange(
+                $entry->company_id, auth()->id(),
+                request()->header('X-Device-Id'),
+                'account_transactions', $entry->id, 'UPDATE', $entry->toArray()
+            );
+        });
+    }
 }

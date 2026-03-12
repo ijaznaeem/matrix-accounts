@@ -30,4 +30,25 @@ class PaymentAccount extends Model
     {
         return $this->belongsTo(Company::class);
     }
+
+    protected static function boot()
+    {
+        parent::boot();
+
+        static::created(function ($a) {
+            app(\App\Services\SyncService::class)->recordChange(
+                $a->company_id, auth()->id(),
+                request()->header('X-Device-Id'),
+                'payment_accounts', $a->id, 'INSERT', $a->toArray()
+            );
+        });
+
+        static::updated(function ($a) {
+            app(\App\Services\SyncService::class)->recordChange(
+                $a->company_id, auth()->id(),
+                request()->header('X-Device-Id'),
+                'payment_accounts', $a->id, 'UPDATE', $a->toArray()
+            );
+        });
+    }
 }

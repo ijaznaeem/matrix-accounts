@@ -1,7 +1,10 @@
+import 'dart:convert';
+
 import 'package:isar/isar.dart';
 
 import '../../../data/models/account_models.dart';
 import '../../../data/models/party_model.dart';
+import '../../../data/models/sync_change_model.dart';
 
 class PartyDao {
   final Isar isar;
@@ -10,9 +13,33 @@ class PartyDao {
 
   Future<void> saveParty(Party party) async {
     await isar.writeTxn(() async {
+      final isNew = party.id == Isar.autoIncrement;
       await isar.partys.put(party);
+      final change = SyncChange()
+        ..companyId = party.companyId
+        ..table = 'parties'
+        ..operation = isNew ? ChangeOperation.create : ChangeOperation.update
+        ..recordId = party.id
+        ..data = jsonEncode(_partyToMap(party))
+        ..createdAt = DateTime.now()
+        ..synced = false;
+      await isar.syncChanges.put(change);
     });
   }
+
+  Map<String, dynamic> _partyToMap(Party p) => {
+        'id': p.id,
+        'company_id': p.companyId,
+        'name': p.name,
+        'party_type': p.partyType.name,
+        'phone': p.phone,
+        'email': p.email,
+        'address': p.address,
+        'opening_balance': p.openingBalance,
+        'credit_limit': p.creditLimit,
+        'payment_terms_days': p.paymentTermsDays,
+        'is_active': p.isActive,
+      };
 
   Future<List<Party>> getAllByCompany(int companyId) async {
     return isar.partys.filter().companyIdEqualTo(companyId).findAll();
@@ -20,7 +47,19 @@ class PartyDao {
 
   Future<void> deleteParty(int id) async {
     await isar.writeTxn(() async {
+      final party = await isar.partys.get(id);
       await isar.partys.delete(id);
+      if (party != null) {
+        final change = SyncChange()
+          ..companyId = party.companyId
+          ..table = 'parties'
+          ..operation = ChangeOperation.delete
+          ..recordId = id
+          ..data = jsonEncode({'id': id})
+          ..createdAt = DateTime.now()
+          ..synced = false;
+        await isar.syncChanges.put(change);
+      }
     });
   }
 

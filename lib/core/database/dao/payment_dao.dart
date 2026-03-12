@@ -1,7 +1,10 @@
+import 'dart:convert';
+
 import 'package:isar/isar.dart';
 
 import '../../../data/models/party_model.dart';
 import '../../../data/models/payment_models.dart';
+import '../../../data/models/sync_change_model.dart';
 import 'account_dao.dart';
 
 class PaymentDao {
@@ -173,6 +176,24 @@ class PaymentDao {
 
       final paymentId = await isar.paymentIns.put(payment);
 
+      // Record sync change for created PaymentIn
+      await isar.syncChanges.put(SyncChange()
+        ..companyId = companyId
+        ..table = 'payment_ins'
+        ..operation = ChangeOperation.create
+        ..recordId = paymentId
+        ..data = jsonEncode({
+          'id': paymentId,
+          'company_id': companyId,
+          'receipt_no': receiptNo,
+          'receipt_date': receiptDate.toIso8601String(),
+          'party_id': customer.id,
+          'total_amount': totalAmount,
+          'description': description,
+        })
+        ..createdAt = DateTime.now()
+        ..synced = false);
+
       // Add small delays to ensure unique timestamps for proper ordering
       int microsecondsDelay = 0;
 
@@ -311,6 +332,16 @@ class PaymentDao {
 
       // Delete payment
       await isar.paymentIns.delete(paymentInId);
+
+      // Record sync change for deleted PaymentIn
+      await isar.syncChanges.put(SyncChange()
+        ..companyId = 0 // companyId not available without fetching party
+        ..table = 'payment_ins'
+        ..operation = ChangeOperation.delete
+        ..recordId = paymentInId
+        ..data = jsonEncode({'id': paymentInId})
+        ..createdAt = DateTime.now()
+        ..synced = false);
     });
   }
 
@@ -370,6 +401,24 @@ class PaymentDao {
         ..createdByUserId = userId;
 
       final paymentId = await isar.paymentOuts.put(payment);
+
+      // Record sync change for created PaymentOut
+      await isar.syncChanges.put(SyncChange()
+        ..companyId = companyId
+        ..table = 'payment_outs'
+        ..operation = ChangeOperation.create
+        ..recordId = paymentId
+        ..data = jsonEncode({
+          'id': paymentId,
+          'company_id': companyId,
+          'voucher_no': voucherNo,
+          'voucher_date': voucherDate.toIso8601String(),
+          'party_id': supplier.id,
+          'total_amount': totalAmount,
+          'description': description,
+        })
+        ..createdAt = DateTime.now()
+        ..synced = false);
 
       // Add small delays to ensure unique timestamps for proper ordering
       int microsecondsDelay = 0;
@@ -509,6 +558,16 @@ class PaymentDao {
 
       // Delete payment
       await isar.paymentOuts.delete(paymentOutId);
+
+      // Record sync change for deleted PaymentOut
+      await isar.syncChanges.put(SyncChange()
+        ..companyId = 0
+        ..table = 'payment_outs'
+        ..operation = ChangeOperation.delete
+        ..recordId = paymentOutId
+        ..data = jsonEncode({'id': paymentOutId})
+        ..createdAt = DateTime.now()
+        ..synced = false);
     });
   }
 

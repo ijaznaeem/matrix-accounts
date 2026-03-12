@@ -42,4 +42,33 @@ class Transaction extends Model
     {
         return $this->hasOne(Invoice::class);
     }
+
+    protected static function boot()
+    {
+        parent::boot();
+
+        static::created(function ($txn) {
+            app(\App\Services\SyncService::class)->recordChange(
+                $txn->company_id, auth()->id(),
+                request()->header('X-Device-Id'),
+                'transactions', $txn->id, 'INSERT', $txn->toArray()
+            );
+        });
+
+        static::updated(function ($txn) {
+            app(\App\Services\SyncService::class)->recordChange(
+                $txn->company_id, auth()->id(),
+                request()->header('X-Device-Id'),
+                'transactions', $txn->id, 'UPDATE', $txn->toArray()
+            );
+        });
+
+        static::deleted(function ($txn) {
+            app(\App\Services\SyncService::class)->recordChange(
+                $txn->company_id, auth()->id(),
+                request()->header('X-Device-Id'),
+                'transactions', $txn->id, 'DELETE', ['id' => $txn->id]
+            );
+        });
+    }
 }

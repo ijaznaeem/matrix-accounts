@@ -19,17 +19,65 @@ class Invoice extends Model
         'due_date',
         'grand_total',
         'status',
+        'previous_balance',
+        'paid_amount',
+        'remaining_balance',
+        'invoice_number',
     ];
 
     protected $casts = [
-        'invoice_date' => 'date',
-        'due_date' => 'date',
-        'grand_total' => 'decimal:2',
+        'invoice_date'      => 'date',
+        'due_date'          => 'date',
+        'grand_total'       => 'decimal:2',
+        'previous_balance'  => 'decimal:2',
+        'paid_amount'       => 'decimal:2',
+        'remaining_balance' => 'decimal:2',
     ];
 
     public function company()
     {
         return $this->belongsTo(Company::class);
+    }
+
+    protected static function boot()
+    {
+        parent::boot();
+
+        static::created(function ($invoice) {
+            app(\App\Services\SyncService::class)->recordChange(
+                $invoice->company_id,
+                auth()->id(),
+                request()->header('X-Device-Id'),
+                'invoices',
+                $invoice->id,
+                'INSERT',
+                $invoice->toArray()
+            );
+        });
+
+        static::updated(function ($invoice) {
+            app(\App\Services\SyncService::class)->recordChange(
+                $invoice->company_id,
+                auth()->id(),
+                request()->header('X-Device-Id'),
+                'invoices',
+                $invoice->id,
+                'UPDATE',
+                $invoice->toArray()
+            );
+        });
+
+        static::deleted(function ($invoice) {
+            app(\App\Services\SyncService::class)->recordChange(
+                $invoice->company_id,
+                auth()->id(),
+                request()->header('X-Device-Id'),
+                'invoices',
+                $invoice->id,
+                'DELETE',
+                ['id' => $invoice->id]
+            );
+        });
     }
 
     public function transaction()

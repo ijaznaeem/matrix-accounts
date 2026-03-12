@@ -35,4 +35,29 @@ class TransactionLine extends Model
     {
         return $this->belongsTo(Product::class);
     }
+
+    protected static function boot()
+    {
+        parent::boot();
+
+        static::created(function ($line) {
+            $txn = Transaction::find($line->transaction_id);
+            if (!$txn) return;
+            app(\App\Services\SyncService::class)->recordChange(
+                $txn->company_id, auth()->id(),
+                request()->header('X-Device-Id'),
+                'transaction_lines', $line->id, 'INSERT', $line->toArray()
+            );
+        });
+
+        static::updated(function ($line) {
+            $txn = Transaction::find($line->transaction_id);
+            if (!$txn) return;
+            app(\App\Services\SyncService::class)->recordChange(
+                $txn->company_id, auth()->id(),
+                request()->header('X-Device-Id'),
+                'transaction_lines', $line->id, 'UPDATE', $line->toArray()
+            );
+        });
+    }
 }

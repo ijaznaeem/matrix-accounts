@@ -40,4 +40,33 @@ class PaymentIn extends Model
     {
         return $this->hasMany(PaymentInLine::class);
     }
+
+    protected static function boot()
+    {
+        parent::boot();
+
+        static::created(function ($p) {
+            app(\App\Services\SyncService::class)->recordChange(
+                $p->company_id, auth()->id(),
+                request()->header('X-Device-Id'),
+                'payment_ins', $p->id, 'INSERT', $p->toArray()
+            );
+        });
+
+        static::updated(function ($p) {
+            app(\App\Services\SyncService::class)->recordChange(
+                $p->company_id, auth()->id(),
+                request()->header('X-Device-Id'),
+                'payment_ins', $p->id, 'UPDATE', $p->toArray()
+            );
+        });
+
+        static::deleted(function ($p) {
+            app(\App\Services\SyncService::class)->recordChange(
+                $p->company_id, auth()->id(),
+                request()->header('X-Device-Id'),
+                'payment_ins', $p->id, 'DELETE', ['id' => $p->id]
+            );
+        });
+    }
 }

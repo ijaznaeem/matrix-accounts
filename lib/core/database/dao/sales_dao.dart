@@ -1,8 +1,11 @@
+import 'dart:convert';
+
 import 'package:isar/isar.dart';
 
 import '../../../data/models/invoice_stock_models.dart';
 import '../../../data/models/party_model.dart';
 import '../../../data/models/payment_models.dart';
+import '../../../data/models/sync_change_model.dart';
 import '../../../data/models/transaction_model.dart';
 import 'account_dao.dart';
 import 'party_dao.dart';
@@ -83,6 +86,30 @@ class SalesDao {
             totalPayment; // Closing balance
 
       final invoiceId = await isar.invoices.put(invoice);
+
+      // Record sync change for created invoice
+      final _createData = jsonEncode({
+        'id': invoiceId,
+        'company_id': companyId,
+        'transaction_id': txnId,
+        'invoice_type': 'sale',
+        'party_id': customer.id,
+        'invoice_date': date.toIso8601String(),
+        'grand_total': invoice.grandTotal,
+        'status': invoice.status,
+        'previous_balance': invoice.previousBalance,
+        'paid_amount': invoice.paidAmount,
+        'remaining_balance': invoice.remainingBalance,
+      });
+      final _createChange = SyncChange()
+        ..companyId = companyId
+        ..table = 'invoices'
+        ..operation = ChangeOperation.create
+        ..recordId = invoiceId
+        ..data = _createData
+        ..createdAt = DateTime.now()
+        ..synced = false;
+      await isar.syncChanges.put(_createChange);
 
       for (final l in lines) {
         final line = TransactionLine()
@@ -244,6 +271,30 @@ class SalesDao {
       invoice.remainingBalance =
           oldOpeningBalance + newTotal - totalPayment; // Closing balance
       await isar.invoices.put(invoice);
+
+      // Record sync change for updated invoice
+      final _updateData = jsonEncode({
+        'id': invoiceId,
+        'company_id': companyId,
+        'transaction_id': invoice.transactionId,
+        'invoice_type': 'sale',
+        'party_id': customer.id,
+        'invoice_date': date.toIso8601String(),
+        'grand_total': invoice.grandTotal,
+        'status': invoice.status,
+        'previous_balance': invoice.previousBalance,
+        'paid_amount': invoice.paidAmount,
+        'remaining_balance': invoice.remainingBalance,
+      });
+      final _updateChange = SyncChange()
+        ..companyId = companyId
+        ..table = 'invoices'
+        ..operation = ChangeOperation.update
+        ..recordId = invoiceId
+        ..data = _updateData
+        ..createdAt = DateTime.now()
+        ..synced = false;
+      await isar.syncChanges.put(_updateChange);
 
       // Delete old transaction lines and stock ledger entries
       final oldLines = await isar.transactionLines
@@ -409,6 +460,16 @@ class SalesDao {
 
       // Delete invoice
       await isar.invoices.delete(invoiceId);
+
+      // Record sync change for deleted invoice
+      await isar.syncChanges.put(SyncChange()
+        ..companyId = invoice.companyId
+        ..table = 'invoices'
+        ..operation = ChangeOperation.delete
+        ..recordId = invoiceId
+        ..data = jsonEncode({'id': invoiceId})
+        ..createdAt = DateTime.now()
+        ..synced = false);
     });
   }
 

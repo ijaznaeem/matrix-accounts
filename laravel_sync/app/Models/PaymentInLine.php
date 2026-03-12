@@ -29,4 +29,29 @@ class PaymentInLine extends Model
     {
         return $this->belongsTo(PaymentAccount::class);
     }
+
+    protected static function boot()
+    {
+        parent::boot();
+
+        static::created(function ($line) {
+            $parent = PaymentIn::find($line->payment_in_id);
+            if (!$parent) return;
+            app(\App\Services\SyncService::class)->recordChange(
+                $parent->company_id, auth()->id(),
+                request()->header('X-Device-Id'),
+                'payment_in_lines', $line->id, 'INSERT', $line->toArray()
+            );
+        });
+
+        static::deleted(function ($line) {
+            $parent = PaymentIn::find($line->payment_in_id);
+            if (!$parent) return;
+            app(\App\Services\SyncService::class)->recordChange(
+                $parent->company_id, auth()->id(),
+                request()->header('X-Device-Id'),
+                'payment_in_lines', $line->id, 'DELETE', ['id' => $line->id]
+            );
+        });
+    }
 }

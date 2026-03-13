@@ -4,6 +4,7 @@ namespace App\Models;
 
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Support\Facades\Auth;
 
 class PaymentInLine extends Model
 {
@@ -37,8 +38,9 @@ class PaymentInLine extends Model
         static::created(function ($line) {
             $parent = PaymentIn::find($line->payment_in_id);
             if (!$parent) return;
+            $userId = Auth::id();
             app(\App\Services\SyncService::class)->recordChange(
-                $parent->company_id, auth()->id(),
+                $parent->company_id, $userId,
                 request()->header('X-Device-Id'),
                 'payment_in_lines', $line->id, 'INSERT', $line->toArray()
             );
@@ -47,8 +49,9 @@ class PaymentInLine extends Model
         static::deleted(function ($line) {
             $parent = PaymentIn::find($line->payment_in_id);
             if (!$parent) return;
+            $userId = Auth::id();
             app(\App\Services\SyncService::class)->recordChange(
-                $parent->company_id, auth()->id(),
+                $parent->company_id, $userId,
                 request()->header('X-Device-Id'),
                 'payment_in_lines', $line->id, 'DELETE', ['id' => $line->id]
             );

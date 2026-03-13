@@ -49,6 +49,10 @@ class SyncService {
     return prefs.getInt('$_companySyncVersionPrefix$companyId') ?? 0;
   }
 
+  int getLastSyncVersionForCompany(int companyId) {
+    return _getLastSyncVersionForCompany(companyId);
+  }
+
   Future<void> _setLastSyncVersionForCompany(int companyId, int version) async {
     await prefs.setInt('$_companySyncVersionPrefix$companyId', version);
   }

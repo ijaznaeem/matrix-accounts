@@ -75,7 +75,8 @@ class _SyncScreenState extends ConsumerState<SyncScreen> {
     try {
       final syncService = ref.read(syncServiceProvider);
       _deviceId = syncService.deviceId;
-      _lastSyncVersion = syncService.lastSyncVersion;
+      _lastSyncVersion =
+          syncService.getLastSyncVersionForCompany(currentCompany.id);
 
       _logSyncDebug(
         'Loading status for company=${currentCompany.id}, deviceId=$_deviceId, localLastVersion=$_lastSyncVersion',

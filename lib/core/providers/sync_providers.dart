@@ -1,9 +1,13 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:shared_preferences/shared_preferences.dart';
-import '../services/api_client.dart';
-import '../services/sync_service.dart';
+
+import '../../features/inventory/logic/product_master_provider.dart';
+import '../../features/parties/logic/party_provider.dart';
+import '../../features/sales/logic/sales_providers.dart';
 import '../config/app_config.dart';
 import '../config/providers.dart';
+import '../services/api_client.dart';
+import '../services/sync_service.dart';
 
 // API Client Provider
 final apiClientProvider = Provider<ApiClient>((ref) {
@@ -60,13 +64,14 @@ class SyncStateData {
 
 final syncStateProvider =
     StateNotifierProvider<SyncStateNotifier, SyncStateData>((ref) {
-  return SyncStateNotifier(ref.watch(syncServiceProvider));
+  return SyncStateNotifier(ref, ref.watch(syncServiceProvider));
 });
 
 class SyncStateNotifier extends StateNotifier<SyncStateData> {
+  final Ref ref;
   final SyncService syncService;
 
-  SyncStateNotifier(this.syncService)
+  SyncStateNotifier(this.ref, this.syncService)
       : super(SyncStateData(state: SyncState.idle));
 
   Future<void> performSync(int companyId) async {
@@ -76,6 +81,11 @@ class SyncStateNotifier extends StateNotifier<SyncStateData> {
       final result = await syncService.fullSync(companyId);
 
       if (result.success) {
+        ref.read(productCategoryRefreshProvider.notifier).state++;
+        ref.read(inventoryProductListRefreshProvider.notifier).state++;
+        ref.read(productListRefreshProvider.notifier).state++;
+        ref.read(partyListRefreshProvider.notifier).state++;
+
         state = SyncStateData(
           state: SyncState.success,
           message: 'Sync completed successfully',

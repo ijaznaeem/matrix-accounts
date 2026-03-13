@@ -9,9 +9,13 @@ final partyDaoProvider = Provider<PartyDao>((ref) {
   return PartyDao(isar);
 });
 
+final partyListRefreshProvider = StateProvider<int>((ref) => 0);
+
 final partyListProvider = FutureProvider<List<Party>>((ref) async {
+  ref.watch(partyListRefreshProvider);
   final dao = ref.read(partyDaoProvider);
-  final company = ref.read(currentCompanyProvider);
+  final company = ref.watch(currentCompanyProvider);
   if (company == null) return [];
+  await dao.ensureOpeningBalanceLedgerEntries(company.id);
   return dao.getAllByCompany(company.id);
 });

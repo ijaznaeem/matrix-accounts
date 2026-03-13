@@ -5,6 +5,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../core/config/providers.dart';
+import '../../core/providers/sync_providers.dart';
 import '../../features/companies/services/company_service.dart';
 
 class SplashScreen extends ConsumerStatefulWidget {
@@ -72,6 +73,12 @@ class _SplashScreenState extends ConsumerState<SplashScreen> {
                   ref.read(selectedCompanyIdProvider.notifier).state =
                       company.id;
 
+                  // Try automatic server login + sync in background.
+                  Future(() async {
+                    final syncService = ref.read(syncServiceProvider);
+                    await syncService.autoLoginAndSyncAllLocalCompanies();
+                  });
+
                   // Navigate to dashboard with safety check
                   if (mounted && !_isNavigating) {
                     _isNavigating = true;
@@ -102,6 +109,12 @@ class _SplashScreenState extends ConsumerState<SplashScreen> {
               }
             }
           } else {
+            // Try automatic server login + sync in background.
+            Future(() async {
+              final syncService = ref.read(syncServiceProvider);
+              await syncService.autoLoginAndSyncAllLocalCompanies();
+            });
+
             // No company selected, go to company selection
             if (mounted && !_isNavigating) {
               _isNavigating = true;
@@ -143,8 +156,6 @@ class _SplashScreenState extends ConsumerState<SplashScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final colorScheme = Theme.of(context).colorScheme;
-
     return Scaffold(
       body: Container(
         decoration: const BoxDecoration(
@@ -154,23 +165,19 @@ class _SplashScreenState extends ConsumerState<SplashScreen> {
           child: Column(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
-              Icon(
-                Icons.account_balance_wallet,
-                size: 80,
-                color: colorScheme.primary,
-              ),
-              const SizedBox(height: 24),
-              Text(
-                'Matrix Accounts',
-                style: TextStyle(
-                  fontSize: 28,
-                  fontWeight: FontWeight.bold,
-                  color: colorScheme.primary,
+              Image.asset(
+                'assets/icons/splash_logo.png',
+                width: 280,
+                fit: BoxFit.contain,
+                errorBuilder: (context, error, stackTrace) => const Icon(
+                  Icons.account_balance_wallet,
+                  size: 96,
+                  color: Colors.blueAccent,
                 ),
               ),
               const SizedBox(height: 32),
-              CircularProgressIndicator(
-                color: colorScheme.primary,
+              const CircularProgressIndicator(
+                color: Colors.blueAccent,
               ),
             ],
           ),

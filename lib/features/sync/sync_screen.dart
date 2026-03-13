@@ -1,7 +1,7 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
-import '../../core/config/app_config.dart';
 import '../../core/config/providers.dart';
 import '../../core/providers/sync_providers.dart';
 import '../../core/widgets/sync_button.dart';
@@ -20,98 +20,50 @@ class _SyncScreenState extends ConsumerState<SyncScreen> {
   int? _currentVersion;
   int? _pendingChanges;
 
-  // Server login state
+  // Auth state comes from main app login only
   bool _isLoggedIn = false;
-  bool _isLoggingIn = false;
   String? _serverEmail;
-  final _emailController = TextEditingController();
-  final _passwordController = TextEditingController();
-  bool _passwordVisible = false;
+
+  void _logSyncDebug(String message) {
+    if (kDebugMode) {
+      debugPrint('[SyncScreen] $message');
+    }
+  }
 
   @override
   void initState() {
     super.initState();
+
+    ref.listenManual<SyncStateData>(syncStateProvider, (previous, next) {
+      _logSyncDebug(
+        'State: ${next.state.name}, message: ${next.message ?? '-'}, changesApplied: ${next.changesApplied?.toString() ?? '-'}',
+      );
+    });
+
     _loadSyncStatus();
     _checkAuthStatus();
-  }
-
-  @override
-  void dispose() {
-    _emailController.dispose();
-    _passwordController.dispose();
-    super.dispose();
   }
 
   void _checkAuthStatus() {
     final apiClient = ref.read(apiClientProvider);
     setState(() {
       _isLoggedIn = apiClient.token != null;
-      _serverEmail = apiClient.prefs.getString('server_email');
+      _serverEmail = ref.read(authServiceProvider).userEmail;
     });
   }
 
-  Future<void> _handleServerLogin() async {
-    final email = _emailController.text.trim();
-    final password = _passwordController.text;
-    if (email.isEmpty || password.isEmpty) return;
-
-    setState(() => _isLoggingIn = true);
-    try {
-      final apiClient = ref.read(apiClientProvider);
-      final response = await apiClient.post('/api/auth/login', {
-        'email': email,
-        'password': password,
-      });
-      if (response['success'] == true && response['token'] != null) {
-        await apiClient.prefs.setString('auth_token', response['token']);
-        await apiClient.prefs.setString('server_email', email);
-        setState(() {
-          _isLoggedIn = true;
-          _serverEmail = email;
-        });
-        _emailController.clear();
-        _passwordController.clear();
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-              content: Text('Logged in to sync server successfully'),
-              backgroundColor: Colors.green,
-            ),
-          );
-          _loadSyncStatus();
-        }
-      } else {
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text(response['message'] ?? 'Login failed'),
-              backgroundColor: Colors.red,
-            ),
-          );
-        }
-      }
-    } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Cannot reach server: $e'),
-            backgroundColor: Colors.red,
-          ),
-        );
-      }
-    } finally {
-      if (mounted) setState(() => _isLoggingIn = false);
-    }
-  }
-
   Future<void> _handleServerLogout() async {
-    final apiClient = ref.read(apiClientProvider);
-    await apiClient.prefs.remove('auth_token');
-    await apiClient.prefs.remove('server_email');
+    final authService = ref.read(authServiceProvider);
+    await authService.logout();
     setState(() {
       _isLoggedIn = false;
       _serverEmail = null;
     });
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Signed out. Please login again.')),
+      );
+    }
   }
 
   Future<void> _loadSyncStatus() async {
@@ -125,14 +77,24 @@ class _SyncScreenState extends ConsumerState<SyncScreen> {
       _deviceId = syncService.deviceId;
       _lastSyncVersion = syncService.lastSyncVersion;
 
+      _logSyncDebug(
+        'Loading status for company=${currentCompany.id}, deviceId=$_deviceId, localLastVersion=$_lastSyncVersion',
+      );
+
       final status = await syncService.getSyncStatus(currentCompany.id);
       if (status != null && mounted) {
         setState(() {
           _currentVersion = status.currentVersion;
           _pendingChanges = status.pendingChanges;
         });
+        _logSyncDebug(
+          'Status loaded: serverVersion=$_currentVersion, pending=$_pendingChanges, statusDeviceId=${status.deviceId}',
+        );
+      } else {
+        _logSyncDebug('Status request returned null');
       }
     } catch (e) {
+      _logSyncDebug('Error loading sync status: $e');
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text('Error loading sync status: $e')),
@@ -246,9 +208,12 @@ class _SyncScreenState extends ConsumerState<SyncScreen> {
                           Row(
                             children: [
                               Icon(
-                                _isLoggedIn ? Icons.cloud_done : Icons.cloud_off,
+                                _isLoggedIn
+                                    ? Icons.cloud_done
+                                    : Icons.cloud_off,
                                 size: 20,
-                                color: _isLoggedIn ? Colors.green : Colors.orange,
+                                color:
+                                    _isLoggedIn ? Colors.green : Colors.orange,
                               ),
                               const SizedBox(width: 8),
                               const Text(
@@ -261,83 +226,52 @@ class _SyncScreenState extends ConsumerState<SyncScreen> {
                             ],
                           ),
                           const Divider(height: 24),
-                          if (_isLoggedIn) ...([
-                            Row(
-                              children: [
-                                const Icon(Icons.check_circle, color: Colors.green, size: 18),
-                                const SizedBox(width: 8),
-                                Expanded(
-                                  child: Text(
-                                    'Signed in as ${_serverEmail ?? 'Unknown'}',
-                                    style: const TextStyle(fontSize: 14),
+                          if (_isLoggedIn)
+                            ...([
+                              Row(
+                                children: [
+                                  const Icon(Icons.check_circle,
+                                      color: Colors.green, size: 18),
+                                  const SizedBox(width: 8),
+                                  Expanded(
+                                    child: Text(
+                                      'Signed in as ${_serverEmail ?? 'Unknown'}',
+                                      style: const TextStyle(fontSize: 14),
+                                    ),
+                                  ),
+                                ],
+                              ),
+                              const SizedBox(height: 12),
+                              SizedBox(
+                                width: double.infinity,
+                                child: OutlinedButton.icon(
+                                  onPressed: _handleServerLogout,
+                                  icon: const Icon(Icons.logout, size: 18),
+                                  label: const Text('Sign Out'),
+                                  style: OutlinedButton.styleFrom(
+                                    foregroundColor: Colors.red,
+                                    side: const BorderSide(color: Colors.red),
                                   ),
                                 ),
-                              ],
-                            ),
-                            const SizedBox(height: 12),
-                            SizedBox(
-                              width: double.infinity,
-                              child: OutlinedButton.icon(
-                                onPressed: _handleServerLogout,
-                                icon: const Icon(Icons.logout, size: 18),
-                                label: const Text('Sign Out from Server'),
-                                style: OutlinedButton.styleFrom(
-                                  foregroundColor: Colors.red,
-                                  side: const BorderSide(color: Colors.red),
-                                ),
                               ),
-                            ),
-                          ]) else ...[
+                            ])
+                          else ...[
                             Text(
-                              'Sign in with your server account to enable sync.\nServer: ${AppConfig.apiBaseUrl}',
-                              style: const TextStyle(color: Colors.grey, fontSize: 13),
-                            ),
-                            const SizedBox(height: 16),
-                            TextField(
-                              controller: _emailController,
-                              decoration: const InputDecoration(
-                                labelText: 'Email',
-                                prefixIcon: Icon(Icons.email_outlined),
-                                border: OutlineInputBorder(),
-                                isDense: true,
-                              ),
-                              keyboardType: TextInputType.emailAddress,
-                              textInputAction: TextInputAction.next,
-                            ),
-                            const SizedBox(height: 12),
-                            TextField(
-                              controller: _passwordController,
-                              decoration: InputDecoration(
-                                labelText: 'Password',
-                                prefixIcon: const Icon(Icons.lock_outline),
-                                border: const OutlineInputBorder(),
-                                isDense: true,
-                                suffixIcon: IconButton(
-                                  icon: Icon(_passwordVisible
-                                      ? Icons.visibility_off
-                                      : Icons.visibility),
-                                  onPressed: () => setState(
-                                      () => _passwordVisible = !_passwordVisible),
-                                ),
-                              ),
-                              obscureText: !_passwordVisible,
-                              textInputAction: TextInputAction.done,
-                              onSubmitted: (_) => _handleServerLogin(),
+                              'Sync requires app login with your server account. Please return to login screen.',
+                              style: const TextStyle(
+                                  color: Colors.grey, fontSize: 13),
                             ),
                             const SizedBox(height: 12),
                             SizedBox(
                               width: double.infinity,
                               child: FilledButton.icon(
-                                onPressed: _isLoggingIn ? null : _handleServerLogin,
-                                icon: _isLoggingIn
-                                    ? const SizedBox(
-                                        width: 16,
-                                        height: 16,
-                                        child: CircularProgressIndicator(
-                                            strokeWidth: 2, color: Colors.white),
-                                      )
-                                    : const Icon(Icons.login),
-                                label: Text(_isLoggingIn ? 'Signing in...' : 'Sign In to Server'),
+                                onPressed: () {
+                                  if (mounted) {
+                                    Navigator.of(context).pop();
+                                  }
+                                },
+                                icon: const Icon(Icons.login),
+                                label: const Text('Back'),
                               ),
                             ),
                           ],

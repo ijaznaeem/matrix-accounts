@@ -11,19 +11,105 @@ class PartyDao {
 
   PartyDao(this.isar);
 
+  Future<void> _recordSyncChange({
+    required int companyId,
+    required String table,
+    required ChangeOperation operation,
+    required int recordId,
+    required Map<String, dynamic> data,
+  }) async {
+    final change = SyncChange()
+      ..companyId = companyId
+      ..table = table
+      ..operation = operation
+      ..recordId = recordId
+      ..data = jsonEncode(data)
+      ..createdAt = DateTime.now()
+      ..synced = false;
+
+    await isar.syncChanges.put(change);
+  }
+
+  Future<void> _syncPartyUpdate(Party party) async {
+    await _recordSyncChange(
+      companyId: party.companyId,
+      table: 'parties',
+      operation: ChangeOperation.update,
+      recordId: party.id,
+      data: _partyToMap(party),
+    );
+  }
+
+  Future<void> _syncAccountUpdate(Account account) async {
+    await _recordSyncChange(
+      companyId: account.companyId,
+      table: 'accounts',
+      operation: ChangeOperation.update,
+      recordId: account.id,
+      data: {
+        'id': account.id,
+        'company_id': account.companyId,
+        'name': account.name,
+        'code': account.code,
+        'account_type': account.accountType.name,
+        'parent_account_id': account.parentAccountId,
+        'description': account.description,
+        'is_system': account.isSystem,
+        'opening_balance': account.openingBalance,
+        'current_balance': account.currentBalance,
+        'is_active': account.isActive,
+        'created_at': account.createdAt.toIso8601String(),
+      },
+    );
+  }
+
+  Future<void> _syncAccountTransactionCreate(
+      AccountTransaction transaction) async {
+    await _recordSyncChange(
+      companyId: transaction.companyId,
+      table: 'account_transactions',
+      operation: ChangeOperation.create,
+      recordId: transaction.id,
+      data: {
+        'id': transaction.id,
+        'company_id': transaction.companyId,
+        'account_id': transaction.accountId,
+        'transaction_type': transaction.transactionType.name,
+        'reference_id': transaction.referenceId,
+        'transaction_date': transaction.transactionDate.toIso8601String(),
+        'description': transaction.description,
+        'debit': transaction.debit,
+        'credit': transaction.credit,
+        'running_balance': transaction.runningBalance,
+        'reference_no': transaction.referenceNo,
+        'party_id': transaction.partyId,
+        'created_at': transaction.createdAt.toIso8601String(),
+      },
+    );
+  }
+
+  Future<void> _syncAccountTransactionDelete(
+      AccountTransaction transaction) async {
+    await _recordSyncChange(
+      companyId: transaction.companyId,
+      table: 'account_transactions',
+      operation: ChangeOperation.delete,
+      recordId: transaction.id,
+      data: {'id': transaction.id},
+    );
+  }
+
   Future<void> saveParty(Party party) async {
     await isar.writeTxn(() async {
       final isNew = party.id == Isar.autoIncrement;
       await isar.partys.put(party);
-      final change = SyncChange()
-        ..companyId = party.companyId
-        ..table = 'parties'
-        ..operation = isNew ? ChangeOperation.create : ChangeOperation.update
-        ..recordId = party.id
-        ..data = jsonEncode(_partyToMap(party))
-        ..createdAt = DateTime.now()
-        ..synced = false;
-      await isar.syncChanges.put(change);
+      await _recordSyncChange(
+        companyId: party.companyId,
+        table: 'parties',
+        operation: isNew ? ChangeOperation.create : ChangeOperation.update,
+        recordId: party.id,
+        data: _partyToMap(party),
+      );
     });
   }
 
@@ -41,6 +127,84 @@ class PartyDao {
         'is_active': p.isActive,
       };
 
+  Future<void> ensureOpeningBalanceLedgerEntries(int companyId) async {
+    await isar.writeTxn(() async {
+      final receivableAccount = await isar.accounts
+          .filter()
+          .companyIdEqualTo(companyId)
+          .codeEqualTo('1200')
+          .findFirst();
+      final payableAccount = await isar.accounts
+          .filter()
+          .companyIdEqualTo(companyId)
+          .codeEqualTo('2000')
+          .findFirst();
+
+      final parties =
+          await isar.partys.filter().companyIdEqualTo(companyId).findAll();
+
+      for (final party in parties) {
+        if (party.openingBalance == 0) {
+          continue;
+        }
+
+        final account = (party.partyType == PartyType.customer ||
+                party.partyType == PartyType.both)
+            ? receivableAccount
+            : payableAccount;
+        if (account == null) {
+          continue;
+        }
+
+        final existingEntry = await isar.accountTransactions
+            .filter()
+            .companyIdEqualTo(companyId)
+            .accountIdEqualTo(account.id)
+            .partyIdEqualTo(party.id)
+            .transactionTypeEqualTo(TransactionType.journalEntry)
+            .descriptionContains('Opening Balance')
+            .findFirst();
+        if (existingEntry != null) {
+          continue;
+        }
+
+        final transaction = AccountTransaction()
+          ..companyId = companyId
+          ..accountId = account.id
+          ..transactionType = TransactionType.journalEntry
+          ..referenceId = 0
+          ..transactionDate = party.createdAt
+          ..description = 'Opening Balance - ${party.name}'
+          ..referenceNo = 'OB-${party.name}'
+          ..partyId = party.id;
+
+        if (account.code == '1200') {
+          if (party.openingBalance > 0) {
+            transaction.debit = party.openingBalance;
+            transaction.credit = 0;
+          } else {
+            transaction.debit = 0;
+            transaction.credit = party.openingBalance.abs();
+          }
+        } else {
+          if (party.openingBalance > 0) {
+            transaction.debit = 0;
+            transaction.credit = party.openingBalance;
+          } else {
+            transaction.debit = party.openingBalance.abs();
+            transaction.credit = 0;
+          }
+        }
+
+        account.currentBalance += transaction.debit - transaction.credit;
+        transaction.runningBalance = account.currentBalance;
+
+        await isar.accountTransactions.put(transaction);
+        await isar.accounts.put(account);
+      }
+    });
+  }
+
   Future<List<Party>> getAllByCompany(int companyId) async {
     return isar.partys.filter().companyIdEqualTo(companyId).findAll();
   }
@@ -50,15 +214,13 @@ class PartyDao {
       final party = await isar.partys.get(id);
       await isar.partys.delete(id);
       if (party != null) {
-        final change = SyncChange()
-          ..companyId = party.companyId
-          ..table = 'parties'
-          ..operation = ChangeOperation.delete
-          ..recordId = id
-          ..data = jsonEncode({'id': id})
-          ..createdAt = DateTime.now()
-          ..synced = false;
-        await isar.syncChanges.put(change);
+        await _recordSyncChange(
+          companyId: party.companyId,
+          table: 'parties',
+          operation: ChangeOperation.delete,
+          recordId: id,
+          data: {'id': id},
+        );
       }
     });
   }
@@ -125,6 +287,7 @@ class PartyDao {
             // Reverse its effect
             account.currentBalance -= (existingOB.debit - existingOB.credit);
             await isar.accountTransactions.delete(existingOB.id);
+            await _syncAccountTransactionDelete(existingOB);
           }
 
           if (openingBalance != 0) {
@@ -166,14 +329,18 @@ class PartyDao {
             transaction.runningBalance = account.currentBalance;
 
             await isar.accountTransactions.put(transaction);
+            await _syncAccountTransactionCreate(transaction);
             await isar.accounts.put(account);
           }
+
+          await _syncAccountUpdate(account);
         }
       }
 
       // Update party record
       party.openingBalance = openingBalance;
       await isar.partys.put(party);
+      await _syncPartyUpdate(party);
     });
   }
 

@@ -81,6 +81,7 @@ class SyncController extends Controller
             'company_id' => 'required|integer',
             'device_id' => 'required|string',
             'changes' => 'required|array',
+            'changes.*.op_uuid' => 'nullable|string|max:100',
         ]);
 
         // Verify user has access to this company

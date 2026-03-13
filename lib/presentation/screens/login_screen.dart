@@ -19,6 +19,7 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
   final _passwordController = TextEditingController(text: 'password123');
   bool _isPasswordVisible = false;
   bool _isLoading = false;
+  bool _isInitialSyncing = false;
 
   @override
   void dispose() {
@@ -32,7 +33,10 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
       return;
     }
 
-    setState(() => _isLoading = true);
+    setState(() {
+      _isLoading = true;
+      _isInitialSyncing = false;
+    });
 
     try {
       final authService = ref.read(authServiceProvider);
@@ -40,34 +44,54 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
       final email = _emailController.text.trim();
       final password = _passwordController.text;
 
-      // Try API login first (for sync support)
-      bool apiLoginSuccess = false;
-      try {
-        final response = await apiClient.post('/api/auth/login', {
-          'email': email,
-          'password': password,
-        });
-        if (response['success'] == true && response['token'] != null) {
-          // Store auth token for sync
-          await apiClient.prefs.setString('auth_token', response['token']);
-          apiLoginSuccess = true;
+      final response = await apiClient.post('/api/auth/login', {
+        'email': email,
+        'password': password,
+      });
+
+      if (response['success'] != true || response['token'] == null) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text(response['message']?.toString() ?? 'Login failed'),
+            ),
+          );
         }
-      } catch (_) {
-        // API unavailable (offline mode) — continue with local login
+        return;
       }
 
-      final fullName =
-          email.split('@').first.replaceAll('.', ' ').toUpperCase();
+      final userData = response['user'] as Map<String, dynamic>?;
+      final serverUserId = (userData?['id'] as int?) ?? 0;
+      final serverEmail = userData?['email']?.toString() ?? email;
+      final fullName = userData?['full_name']?.toString() ??
+          serverEmail.split('@').first.replaceAll('.', ' ').toUpperCase();
+
+      if (serverUserId <= 0) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+                content: Text('Invalid user data from server login')),
+          );
+        }
+        return;
+      }
+
+      await apiClient.prefs.setString('auth_token', response['token']);
+      await authService.saveServerCredentials(
+        email: serverEmail,
+        password: password,
+      );
 
       final user = User()
-        ..email = email
+        ..id = serverUserId
+        ..email = serverEmail
         ..fullName = fullName
         ..passwordHash = ''
         ..isActive = true;
 
       final saved = await authService.saveLoginState(
-        userId: 1,
-        email: email,
+        userId: serverUserId,
+        email: serverEmail,
         fullName: fullName,
       );
 
@@ -75,15 +99,39 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
         ref.read(currentUserProvider.notifier).state = user;
 
         if (mounted) {
-          if (!apiLoginSuccess) {
+          setState(() => _isInitialSyncing = true);
+        }
+
+        final syncService = ref.read(syncServiceProvider);
+        final bootstrapResult = await syncService.bootstrapUserDataOnLogin();
+
+        if (mounted) {
+          setState(() => _isInitialSyncing = false);
+        }
+
+        if (mounted) {
+          if (bootstrapResult.success) {
+            final message = bootstrapResult.companiesDownloaded > 0
+                ? 'Downloaded ${bootstrapResult.companiesDownloaded} companies and synced ${bootstrapResult.changesApplied} changes'
+                : 'Logged in. No companies found on server.';
             ScaffoldMessenger.of(context).showSnackBar(
-              const SnackBar(
+              SnackBar(
+                content: Text(message),
+                duration: const Duration(seconds: 2),
+              ),
+            );
+          } else {
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(
                 content: Text(
-                    'Logged in offline — sync requires internet connection'),
-                duration: Duration(seconds: 2),
+                    'Login succeeded, but initial sync failed: ${bootstrapResult.error ?? 'Unknown error'}'),
+                duration: const Duration(seconds: 3),
               ),
             );
           }
+        }
+
+        if (mounted) {
           context.go('/company');
         }
       } else {
@@ -244,12 +292,27 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                               ),
                             ),
                             child: _isLoading
-                                ? const SizedBox(
-                                    height: 20,
-                                    width: 20,
-                                    child: CircularProgressIndicator(
-                                      strokeWidth: 2,
-                                    ),
+                                ? Row(
+                                    mainAxisAlignment: MainAxisAlignment.center,
+                                    children: [
+                                      const SizedBox(
+                                        height: 18,
+                                        width: 18,
+                                        child: CircularProgressIndicator(
+                                          strokeWidth: 2,
+                                        ),
+                                      ),
+                                      const SizedBox(width: 10),
+                                      Text(
+                                        _isInitialSyncing
+                                            ? 'Syncing initial data...'
+                                            : 'Signing in...',
+                                        style: const TextStyle(
+                                          fontSize: 15,
+                                          fontWeight: FontWeight.w600,
+                                        ),
+                                      ),
+                                    ],
                                   )
                                 : const Text(
                                     'Sign In',
@@ -270,7 +333,7 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                               borderRadius: BorderRadius.circular(8),
                             ),
                             child: Text(
-                              'Use your server credentials for sync, or any email/password (min 6 chars) for offline mode',
+                              'Use your server account credentials to sign in and sync data.',
                               textAlign: TextAlign.center,
                               style: theme.textTheme.bodySmall?.copyWith(
                                 color: colorScheme.onPrimaryContainer,

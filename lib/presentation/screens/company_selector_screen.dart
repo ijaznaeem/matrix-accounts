@@ -3,8 +3,12 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../core/config/providers.dart';
+import '../../core/providers/sync_providers.dart';
 import '../../data/models/company_model.dart';
 import '../../features/companies/services/company_service.dart';
+import '../../features/inventory/logic/product_master_provider.dart';
+import '../../features/parties/logic/party_provider.dart';
+import '../../features/sales/logic/sales_providers.dart';
 
 class CompanySelectorScreen extends ConsumerStatefulWidget {
   const CompanySelectorScreen({super.key});
@@ -15,6 +19,9 @@ class CompanySelectorScreen extends ConsumerStatefulWidget {
 }
 
 class _CompanySelectorScreenState extends ConsumerState<CompanySelectorScreen> {
+  bool _isSwitchingCompany = false;
+  int? _switchingCompanyId;
+
   @override
   Widget build(BuildContext context) {
     final isar = ref.watch(isarServiceProvider).isar;
@@ -91,22 +98,78 @@ class _CompanySelectorScreenState extends ConsumerState<CompanySelectorScreen> {
     Company company,
   ) {
     return GestureDetector(
-      onTap: () async {
-        // Persist company selection
-        ref.read(currentCompanyProvider.notifier).state = company;
-        ref.read(selectedCompanyIdProvider.notifier).state = company.id;
+      onTap: _isSwitchingCompany
+          ? null
+          : () async {
+              setState(() {
+                _isSwitchingCompany = true;
+                _switchingCompanyId = company.id;
+              });
 
-        // Save to shared preferences
-        final authService = ref.read(authServiceProvider);
-        await authService.saveSelectedCompany(
-          companyId: company.id,
-          companyName: company.name,
-        );
+              try {
+                // Persist company selection
+                ref.read(currentCompanyProvider.notifier).state = company;
+                ref.read(selectedCompanyIdProvider.notifier).state = company.id;
 
-        if (context.mounted) {
-          context.go('/dashboard');
-        }
-      },
+                // Save to shared preferences
+                final authService = ref.read(authServiceProvider);
+                await authService.saveSelectedCompany(
+                  companyId: company.id,
+                  companyName: company.name,
+                );
+
+                // Ensure selected company data is up-to-date before opening dashboard.
+                final syncService = ref.read(syncServiceProvider);
+                final tokenReady = await syncService.ensureServerToken();
+                if (tokenReady) {
+                  final syncResult = await syncService.fullSync(company.id);
+                  if (mounted && !syncResult.success) {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      SnackBar(
+                        content: Text(
+                          'Company selected, but sync could not complete: ${syncResult.error ?? 'Unknown error'}',
+                        ),
+                        duration: const Duration(seconds: 3),
+                      ),
+                    );
+                  }
+                } else if (mounted) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(
+                      content: Text(
+                          'Company selected in local mode. Connect internet to load latest server data.'),
+                      duration: Duration(seconds: 2),
+                    ),
+                  );
+                }
+
+                // Force key lists to refresh immediately for the selected company.
+                ref.read(productCategoryRefreshProvider.notifier).state++;
+                ref.read(inventoryProductListRefreshProvider.notifier).state++;
+                ref.read(productListRefreshProvider.notifier).state++;
+                ref.read(partyListRefreshProvider.notifier).state++;
+
+                if (context.mounted) {
+                  context.go('/dashboard');
+                }
+              } catch (e) {
+                if (mounted) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(
+                      content: Text('Failed to switch company: $e'),
+                      duration: const Duration(seconds: 3),
+                    ),
+                  );
+                }
+              } finally {
+                if (mounted) {
+                  setState(() {
+                    _isSwitchingCompany = false;
+                    _switchingCompanyId = null;
+                  });
+                }
+              }
+            },
       child: Container(
         decoration: BoxDecoration(
           color: Colors.white,
@@ -165,7 +228,15 @@ class _CompanySelectorScreenState extends ConsumerState<CompanySelectorScreen> {
                   ],
                 ),
               ),
-              const Icon(Icons.arrow_forward_ios, size: 16, color: Colors.grey),
+              if (_isSwitchingCompany && _switchingCompanyId == company.id)
+                const SizedBox(
+                  width: 18,
+                  height: 18,
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                )
+              else
+                const Icon(Icons.arrow_forward_ios,
+                    size: 16, color: Colors.grey),
             ],
           ),
         ),

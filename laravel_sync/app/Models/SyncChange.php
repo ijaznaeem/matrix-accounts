@@ -15,6 +15,7 @@ class SyncChange extends Model
         'company_id',
         'user_id',
         'device_id',
+        'op_uuid',
         'table_name',
         'record_id',
         'operation',

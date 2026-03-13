@@ -43,40 +43,6 @@ class SeedData {
     print('✓ Units of measure seeded');
   }
 
-  Future<void> _seedCompanies() async {
-    await isar.writeTxn(() async {
-      final companies = [
-        // Company()
-        //   ..subscriberId = 1
-        //   ..name = 'ABC Trading Co.'
-        //   ..primaryCurrency = 'INR'
-        //   ..financialYearStartMonth = 4
-        //   ..createdAt = DateTime.now()
-        //   ..isActive = true,
-        // Company()
-        //   ..subscriberId = 1
-        //   ..name = 'XYZ Enterprises'
-        //   ..primaryCurrency = 'INR'
-        //   ..financialYearStartMonth = 4
-        //   ..createdAt = DateTime.now()
-        //   ..isActive = true,
-        // Company()
-        //   ..subscriberId = 1
-        //   ..name = 'Demo Retail Store'
-        //   ..primaryCurrency = 'INR'
-        //   ..financialYearStartMonth = 4
-        //   ..createdAt = DateTime.now()
-        //   ..isActive = true,
-      ];
-
-      for (final company in companies) {
-        await isar.companys.put(company);
-      }
-    });
-
-    print('✓ Companies seeded');
-  }
-
   Future<void> _seedCustomers() async {
     final companies = await isar.companys.where().findAll();
     if (companies.isEmpty) return;

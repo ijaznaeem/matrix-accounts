@@ -6,6 +6,8 @@ use App\Models\SyncChange;
 use App\Models\SyncVersion;
 use App\Models\DeviceSyncStatus;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\Schema;
 
 class SyncService
 {
@@ -19,7 +21,8 @@ class SyncService
         string $tableName,
         int $recordId,
         string $operation,
-        array $data
+        array $data,
+        ?string $opUuid = null
     ): SyncChange {
         // Get next version number
         $version = $this->getNextVersion($companyId);
@@ -29,6 +32,7 @@ class SyncService
             'company_id' => $companyId,
             'user_id' => $userId ?? 1, // Default to system user
             'device_id' => $deviceId ?? 'server',
+            'op_uuid' => $opUuid,
             'table_name' => $tableName,
             'record_id' => $recordId,
             'operation' => $operation,
@@ -64,9 +68,14 @@ class SyncService
         int $lastVersion = 0,
         ?array $tables = null
     ): array {
+        $backfillDebug = null;
+
+        if ($lastVersion === 0) {
+            $backfillDebug = $this->backfillMissingSyncHistory($companyId, $tables);
+        }
+
         $query = SyncChange::where('company_id', $companyId)
             ->where('version', '>', $lastVersion)
-            ->where('device_id', '!=', $deviceId) // Don't send back device's own changes
             ->orderBy('version', 'asc');
 
         if ($tables) {
@@ -80,7 +89,7 @@ class SyncService
         // Update device sync status
         $this->updateDeviceSyncStatus($companyId, $deviceId, $currentVersion);
 
-        return [
+        $response = [
             'success' => true,
             'current_version' => $currentVersion,
             'changes' => $changes->map(function ($change) {
@@ -94,6 +103,154 @@ class SyncService
                 ];
             })->toArray(),
         ];
+
+        if ($backfillDebug !== null) {
+            $response['debug'] = [
+                'backfill' => $backfillDebug,
+            ];
+        }
+
+        return $response;
+    }
+
+    /**
+     * Ensure existing company data is represented in sync_changes.
+     * This enables fresh installs (lastVersion=0) to receive full current state
+     * even when legacy rows were inserted before sync logging existed.
+     */
+    protected function backfillMissingSyncHistory(int $companyId, ?array $tables = null): array
+    {
+        $summary = [
+            'processed_tables' => 0,
+            'created_sync_changes' => 0,
+            'skipped_tables' => [],
+            'skipped_rows' => 0,
+            'sample_row_errors' => [],
+        ];
+
+        foreach ($this->getSyncableTableNames($tables) as $tableName) {
+            $modelClass = $this->getModelClass($tableName);
+            if (!$modelClass) {
+                $summary['skipped_tables'][] = [
+                    'table' => $tableName,
+                    'reason' => 'unknown_model',
+                ];
+                continue;
+            }
+
+            try {
+                $modelInstance = new $modelClass();
+                $physicalTable = $modelInstance->getTable();
+
+                if (!Schema::hasTable($physicalTable)) {
+                    Log::warning('Sync backfill skipped missing table', [
+                        'company_id' => $companyId,
+                        'table_name' => $tableName,
+                        'physical_table' => $physicalTable,
+                    ]);
+
+                    $summary['skipped_tables'][] = [
+                        'table' => $tableName,
+                        'reason' => 'missing_table',
+                        'physical_table' => $physicalTable,
+                    ];
+                    continue;
+                }
+
+                $summary['processed_tables']++;
+
+                $isGlobal = in_array($tableName, $this->globalTables, true);
+                $query = $isGlobal
+                    ? $modelClass::query()
+                    : $modelClass::where('company_id', $companyId);
+
+                foreach ($query->cursor() as $row) {
+                    try {
+                        $recordId = (int) $row->id;
+
+                        $existsInHistory = SyncChange::where('company_id', $companyId)
+                            ->where('table_name', $tableName)
+                            ->where('record_id', $recordId)
+                            ->exists();
+
+                        if ($existsInHistory) {
+                            continue;
+                        }
+
+                        $this->recordChange(
+                            $companyId,
+                            null,
+                            'server',
+                            $tableName,
+                            $recordId,
+                            'INSERT',
+                            $row->toArray()
+                        );
+
+                        $summary['created_sync_changes']++;
+                    } catch (\Throwable $rowError) {
+                        Log::warning('Sync backfill skipped row', [
+                            'company_id' => $companyId,
+                            'table_name' => $tableName,
+                            'error' => $rowError->getMessage(),
+                        ]);
+
+                        $summary['skipped_rows']++;
+                        if (count($summary['sample_row_errors']) < 5) {
+                            $summary['sample_row_errors'][] = [
+                                'table' => $tableName,
+                                'error' => $rowError->getMessage(),
+                            ];
+                        }
+                    }
+                }
+            } catch (\Throwable $tableError) {
+                Log::warning('Sync backfill skipped table due to error', [
+                    'company_id' => $companyId,
+                    'table_name' => $tableName,
+                    'error' => $tableError->getMessage(),
+                ]);
+
+                $summary['skipped_tables'][] = [
+                    'table' => $tableName,
+                    'reason' => 'table_error',
+                    'error' => $tableError->getMessage(),
+                ];
+                continue;
+            }
+        }
+
+        return $summary;
+    }
+
+    /**
+     * Get syncable table names with optional filtering.
+     */
+    protected function getSyncableTableNames(?array $tables = null): array
+    {
+        $all = [
+            'parties',
+            'products',
+            'invoices',
+            'transactions',
+            'transaction_lines',
+            'accounts',
+            'account_transactions',
+            'payment_accounts',
+            'payment_ins',
+            'payment_in_lines',
+            'payment_outs',
+            'payment_out_lines',
+            'stock_ledgers',
+            'units_of_measure',
+            'item_categories',
+        ];
+
+        if (!$tables || count($tables) === 0) {
+            return $all;
+        }
+
+        return array_values(array_intersect($all, $tables));
     }
 
     /**
@@ -111,11 +268,33 @@ class SyncService
         DB::transaction(function () use ($companyId, $userId, $deviceId, $changes, &$idMappings, &$conflicts) {
             foreach ($changes as $change) {
                 try {
+                    $opUuid = isset($change['op_uuid'])
+                        ? trim((string) $change['op_uuid'])
+                        : null;
+
+                    if ($opUuid === '') {
+                        $opUuid = null;
+                    }
+
+                    if ($opUuid !== null) {
+                        $existing = SyncChange::where('company_id', $companyId)
+                            ->where('op_uuid', $opUuid)
+                            ->first();
+
+                        if ($existing) {
+                            if (isset($change['local_id']) && $existing->operation === 'INSERT') {
+                                $idMappings[$change['local_id']] = $existing->record_id;
+                            }
+                            continue;
+                        }
+                    }
+
                     $result = $this->applyChange(
                         $companyId,
                         $userId,
                         $deviceId,
-                        $change
+                        $change,
+                        $opUuid
                     );
 
                     // Map temporary IDs to server IDs
@@ -127,7 +306,7 @@ class SyncService
                         $conflicts[] = $result['conflict'];
                     }
                 } catch (\Exception $e) {
-                    \Log::error('Error applying change: ' . $e->getMessage(), [
+                    Log::error('Error applying change: ' . $e->getMessage(), [
                         'change' => $change,
                         'exception' => $e,
                     ]);
@@ -157,7 +336,8 @@ class SyncService
         int $companyId,
         int $userId,
         string $deviceId,
-        array $change
+        array $change,
+        ?string $opUuid = null
     ): array {
         $tableName = $change['table'];
         $operation = $change['operation'];
@@ -240,7 +420,8 @@ class SyncService
                 $tableName,
                 $syncRecordId,
                 $operation,
-                $syncData
+                $syncData,
+                $opUuid
             );
         }
 
@@ -315,7 +496,6 @@ class SyncService
 
         $pendingChanges = SyncChange::where('company_id', $companyId)
             ->where('version', '>', $deviceStatus?->last_sync_version ?? 0)
-            ->where('device_id', '!=', $deviceId)
             ->count();
 
         return [

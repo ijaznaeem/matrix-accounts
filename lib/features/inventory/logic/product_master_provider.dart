@@ -9,8 +9,11 @@ final productMasterDaoProvider = Provider<ProductMasterDao>((ref) {
   return ProductMasterDao(isar);
 });
 
+final inventoryProductListRefreshProvider = StateProvider<int>((ref) => 0);
+
 final productListProvider = FutureProvider<List<Product>>((ref) async {
-  final company = ref.read(currentCompanyProvider);
+  ref.watch(inventoryProductListRefreshProvider);
+  final company = ref.watch(currentCompanyProvider);
   if (company == null) return [];
   final dao = ref.read(productMasterDaoProvider);
   return dao.getProductsByCompany(company.id);
@@ -20,7 +23,7 @@ final productCategoryRefreshProvider = StateProvider<int>((ref) => 0);
 
 final productCategoryProvider = FutureProvider<List<ItemCategory>>((ref) async {
   ref.watch(productCategoryRefreshProvider);
-  final company = ref.read(currentCompanyProvider);
+  final company = ref.watch(currentCompanyProvider);
   if (company == null) return [];
   final dao = ref.read(productMasterDaoProvider);
   return dao.getCategories(company.id);

@@ -28,6 +28,14 @@ class SyncService {
   });
 
   Isar get _isar => isarService.isar;
+  static const String _companySyncVersionPrefix = 'last_sync_version_company_';
+  static const Set<String> _globalSyncTables = {'units_of_measure'};
+
+  void _logSyncDebug(String message) {
+    if (kDebugMode) {
+      debugPrint('[SyncService] $message');
+    }
+  }
 
   String get deviceId {
     var id = prefs.getString('device_id');
@@ -38,10 +46,12 @@ class SyncService {
     return id;
   }
 
-  int get lastSyncVersion => prefs.getInt('last_sync_version') ?? 0;
+  int _getLastSyncVersionForCompany(int companyId) {
+    return prefs.getInt('$_companySyncVersionPrefix$companyId') ?? 0;
+  }
 
-  Future<void> setLastSyncVersion(int version) async {
-    await prefs.setInt('last_sync_version', version);
+  Future<void> _setLastSyncVersionForCompany(int companyId, int version) async {
+    await prefs.setInt('$_companySyncVersionPrefix$companyId', version);
   }
 
   // ──────────────────────────────────────────────────────────────────────────
@@ -53,12 +63,20 @@ class SyncService {
     required int companyId,
     int? serverCompanyId,
     List<String>? tables,
+    int? lastVersionOverride,
   }) async {
     try {
+      final lastVersion =
+          lastVersionOverride ?? _getLastSyncVersionForCompany(companyId);
+
+      _logSyncDebug(
+        'pullChanges:start companyId=$companyId serverCompanyId=${serverCompanyId ?? companyId} lastVersion=$lastVersion deviceId=$deviceId',
+      );
+
       final response = await apiClient.post('/api/sync/pull', {
         'company_id': serverCompanyId ?? companyId,
         'device_id': deviceId,
-        'last_version': lastSyncVersion,
+        'last_version': lastVersion,
         if (tables != null) 'tables': tables,
       });
 
@@ -66,8 +84,33 @@ class SyncService {
         final changes = response['changes'] as List;
         final currentVersion = response['current_version'] as int;
 
-        await _applyChanges(changes, localCompanyId: companyId);
-        await setLastSyncVersion(currentVersion);
+        try {
+          await _applyChanges(changes, localCompanyId: companyId);
+        } catch (e) {
+          // Recovery path for stale clients that may have advanced cursor while
+          // missing records due older apply/parsing bugs.
+          final canFallbackToFullResync =
+              lastVersion > 0 && lastVersionOverride == null;
+          if (canFallbackToFullResync) {
+            debugPrint(
+              '[Sync] apply failed at version $lastVersion for company=$companyId; retrying with full resync from version 0. Error: $e',
+            );
+            await _setLastSyncVersionForCompany(companyId, 0);
+            return pullChanges(
+              companyId: companyId,
+              serverCompanyId: serverCompanyId,
+              tables: tables,
+              lastVersionOverride: 0,
+            );
+          }
+          rethrow;
+        }
+
+        await _setLastSyncVersionForCompany(companyId, currentVersion);
+
+        _logSyncDebug(
+          'pullChanges:success companyId=$companyId applied=${changes.length} currentVersion=$currentVersion',
+        );
 
         return SyncResult(
           success: true,
@@ -81,7 +124,124 @@ class SyncService {
         error: response['message'] ?? 'Server returned unsuccessful response',
       );
     } catch (e) {
+      _logSyncDebug('pullChanges:error companyId=$companyId error=$e');
       return SyncResult(success: false, error: e.toString());
+    }
+  }
+
+  /// Post-login bootstrap:
+  /// 1) Download companies linked to authenticated user
+  /// 2) Upsert companies into local Isar
+  /// 3) Pull remote data for each active company
+  Future<LoginBootstrapResult> bootstrapUserDataOnLogin() async {
+    if (apiClient.token == null) {
+      return LoginBootstrapResult(
+        success: false,
+        error: 'Missing auth token for bootstrap sync.',
+      );
+    }
+
+    try {
+      final response = await apiClient.get('/api/companies');
+      if (response['success'] != true || response['companies'] is! List) {
+        return LoginBootstrapResult(
+          success: false,
+          error: response['message']?.toString() ??
+              'Failed to load companies from server.',
+        );
+      }
+
+      final companies = (response['companies'] as List)
+          .whereType<Map>()
+          .map((e) => Map<String, dynamic>.from(e))
+          .toList();
+
+      final userId = prefs.getInt('user_id') ?? 0;
+      int syncedCompanies = 0;
+      int totalChanges = 0;
+      final syncErrors = <String>[];
+      final serverLinkedLocalCompanyIds = <int>{};
+
+      for (final companyData in companies) {
+        final serverCompanyId = companyData['id'] as int?;
+        final companyName = companyData['name']?.toString();
+
+        if (serverCompanyId == null ||
+            companyName == null ||
+            companyName.isEmpty) {
+          continue;
+        }
+
+        int localCompanyId = serverCompanyId;
+        await _isar.writeTxn(() async {
+          final existingById = await _isar.companys.get(serverCompanyId);
+          final existingByName = await _isar.companys
+              .filter()
+              .nameEqualTo(companyName, caseSensitive: false)
+              .findFirst();
+
+          final company = existingById ??
+              existingByName ??
+              (Company()
+                ..id = serverCompanyId
+                ..createdAt = DateTime.now());
+
+          company.subscriberId = userId;
+          company.name = companyName;
+          company.primaryCurrency =
+              companyData['primary_currency']?.toString() ?? 'PKR';
+          company.financialYearStartMonth =
+              companyData['financial_year_start_month'] as int? ?? 1;
+          company.isActive = _asBool(companyData['is_active']);
+
+          await _isar.companys.put(company);
+          localCompanyId = company.id;
+        });
+
+        serverLinkedLocalCompanyIds.add(localCompanyId);
+        await prefs.setInt(
+            'server_company_id_$localCompanyId', serverCompanyId);
+
+        if (_asBool(companyData['is_active'])) {
+          final syncResult = await pullChanges(
+            companyId: localCompanyId,
+            serverCompanyId: serverCompanyId,
+          );
+
+          if (syncResult.success) {
+            syncedCompanies++;
+            totalChanges += syncResult.changesApplied ?? 0;
+          } else {
+            syncErrors.add(
+                'Company $companyName sync failed: ${syncResult.error ?? 'Unknown error'}');
+          }
+        }
+      }
+
+      await _isar.writeTxn(() async {
+        final localCompanies =
+            await _isar.companys.filter().subscriberIdEqualTo(userId).findAll();
+        for (final company in localCompanies) {
+          if (!serverLinkedLocalCompanyIds.contains(company.id) &&
+              company.isActive) {
+            company.isActive = false;
+            await _isar.companys.put(company);
+          }
+        }
+      });
+
+      return LoginBootstrapResult(
+        success: true,
+        companiesDownloaded: companies.length,
+        companiesSynced: syncedCompanies,
+        changesApplied: totalChanges,
+        syncErrors: syncErrors,
+      );
+    } catch (e) {
+      return LoginBootstrapResult(
+        success: false,
+        error: e.toString(),
+      );
     }
   }
 
@@ -92,6 +252,10 @@ class SyncService {
     required List<Map<String, dynamic>> changes,
   }) async {
     try {
+      _logSyncDebug(
+        'pushChanges:start companyId=$companyId serverCompanyId=${serverCompanyId ?? companyId} localChanges=${changes.length} deviceId=$deviceId',
+      );
+
       final response = await apiClient.post('/api/sync/push', {
         'company_id': serverCompanyId ?? companyId,
         'device_id': deviceId,
@@ -123,6 +287,10 @@ class SyncService {
 
         await _updateLocalIds(idMappings, syncChangeIds);
 
+        _logSyncDebug(
+          'pushChanges:success companyId=$companyId currentVersion=${currentVersion?.toString() ?? '-'} conflicts=$conflictsCount markedSynced=${syncChangeIds.length}',
+        );
+
         return SyncResult(
           success: true,
           currentVersion: currentVersion,
@@ -135,41 +303,158 @@ class SyncService {
         error: response['message'] ?? 'Server returned unsuccessful response',
       );
     } catch (e) {
+      _logSyncDebug('pushChanges:error companyId=$companyId error=$e');
       return SyncResult(success: false, error: e.toString());
     }
   }
 
   /// Full bidirectional sync: pull first, then push local changes.
   Future<SyncResult> fullSync(int companyId) async {
-    // Require auth token — sync needs a server account
-    if (apiClient.token == null) {
+    _logSyncDebug('fullSync:start companyId=$companyId');
+
+    // Ensure auth token — sync needs a server account.
+    final hasToken = await ensureServerToken();
+    if (!hasToken) {
+      _logSyncDebug('fullSync:abort no token companyId=$companyId');
       return SyncResult(
         success: false,
         error:
-            'Not authenticated for sync. Please log out and sign in with your server account credentials.',
+            'Server session unavailable for sync. Connect internet and sign in once with your server account.',
       );
     }
 
     // Register or find the company on the server, get server-side company ID
     final serverCompanyId = await _ensureServerCompanyId(companyId);
     if (serverCompanyId == null) {
+      _logSyncDebug('fullSync:abort no serverCompanyId companyId=$companyId');
       return SyncResult(
         success: false,
         error: 'Failed to register company on server. Check your connection.',
       );
     }
 
+    _logSyncDebug(
+      'fullSync:resolved mapping localCompanyId=$companyId serverCompanyId=$serverCompanyId',
+    );
+
     final pullResult = await pullChanges(
         companyId: companyId, serverCompanyId: serverCompanyId);
-    if (!pullResult.success) return pullResult;
+    if (!pullResult.success) {
+      _logSyncDebug(
+        'fullSync:pull-before-push failed companyId=$companyId error=${pullResult.error}',
+      );
+      return SyncResult(
+        success: false,
+        error: 'pull-before-push: ${pullResult.error ?? 'Unknown error'}',
+      );
+    }
 
     final localChanges = await _getLocalChanges(companyId);
-    if (localChanges.isEmpty) return pullResult;
+    _logSyncDebug(
+      'fullSync:localChanges companyId=$companyId count=${localChanges.length}',
+    );
 
-    return pushChanges(
+    if (localChanges.isEmpty) {
+      _logSyncDebug('fullSync:done companyId=$companyId (pull only)');
+      return pullResult;
+    }
+
+    final pushResult = await pushChanges(
         companyId: companyId,
         serverCompanyId: serverCompanyId,
         changes: localChanges);
+
+    if (!pushResult.success) {
+      _logSyncDebug(
+        'fullSync:push failed companyId=$companyId error=${pushResult.error}',
+      );
+      return SyncResult(
+        success: false,
+        error: 'push: ${pushResult.error ?? 'Unknown error'}',
+      );
+    }
+
+    // Pull again so this device immediately receives any changes that happened
+    // during the same sync window (including updates from other devices).
+    final pullAfterPush = await pullChanges(
+      companyId: companyId,
+      serverCompanyId: serverCompanyId,
+    );
+
+    if (!pullAfterPush.success) {
+      _logSyncDebug(
+        'fullSync:pull-after-push failed companyId=$companyId error=${pullAfterPush.error}',
+      );
+      return SyncResult(
+        success: false,
+        error: 'pull-after-push: ${pullAfterPush.error ?? 'Unknown error'}',
+      );
+    }
+
+    _logSyncDebug(
+      'fullSync:done companyId=$companyId applied=${(pullResult.changesApplied ?? 0) + (pullAfterPush.changesApplied ?? 0)} finalVersion=${pullAfterPush.currentVersion ?? pushResult.currentVersion}',
+    );
+
+    return SyncResult(
+      success: true,
+      changesApplied: (pullResult.changesApplied ?? 0) +
+          (pullAfterPush.changesApplied ?? 0),
+      currentVersion: pullAfterPush.currentVersion ?? pushResult.currentVersion,
+      conflicts: pushResult.conflicts,
+    );
+  }
+
+  /// Ensure we have a valid server auth token.
+  /// If missing, attempts automatic login using stored server credentials.
+  Future<bool> ensureServerToken() async {
+    if (apiClient.token != null && apiClient.token!.isNotEmpty) {
+      return true;
+    }
+
+    final email =
+        prefs.getString('server_email') ?? prefs.getString('user_email');
+    final password = prefs.getString('server_password');
+    if (email == null ||
+        email.isEmpty ||
+        password == null ||
+        password.isEmpty) {
+      return false;
+    }
+
+    try {
+      final response = await apiClient.post('/api/auth/login', {
+        'email': email,
+        'password': password,
+        'device_id': deviceId,
+      }).timeout(const Duration(seconds: 8));
+
+      if (response['success'] == true && response['token'] != null) {
+        await prefs.setString('auth_token', response['token'].toString());
+        await prefs.setString('server_email', email);
+        return true;
+      }
+      return false;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  /// Attempt token refresh + data sync for all active local companies.
+  /// Safe to call on app startup; returns false silently when offline.
+  Future<bool> autoLoginAndSyncAllLocalCompanies() async {
+    final hasToken = await ensureServerToken();
+    if (!hasToken) return false;
+
+    try {
+      final companies =
+          await _isar.companys.filter().isActiveEqualTo(true).findAll();
+      for (final company in companies) {
+        await fullSync(company.id);
+      }
+      return true;
+    } catch (_) {
+      return false;
+    }
   }
 
   /// Finds or creates the company on the server and caches the server ID.
@@ -265,16 +550,30 @@ class SyncService {
 
     final allUnsynced = [...companyRecords, ...globalRecords];
 
-    return allUnsynced
-        .map((c) => {
-              'local_id': 'local_${c.id}', // stable reference for id_mappings
-              'table': c.table,
-              'record_id': c.recordId,
-              'operation': _opToString(c.operation),
-              'data': jsonDecode(c.data),
-              'timestamp': c.createdAt.toIso8601String(),
-            })
-        .toList();
+    return allUnsynced.map((c) {
+      final decodedData = jsonDecode(c.data);
+      final data = decodedData is Map
+          ? Map<String, dynamic>.from(decodedData)
+          : <String, dynamic>{};
+
+      if (_globalSyncTables.contains(c.table)) {
+        data.remove('company_id');
+      }
+
+      return {
+        'local_id': 'local_${c.id}', // stable reference for id_mappings
+        'op_uuid': _operationUuidForChange(c),
+        'table': c.table,
+        'record_id': c.recordId,
+        'operation': _opToString(c.operation),
+        'data': data,
+        'timestamp': c.createdAt.toIso8601String(),
+      };
+    }).toList();
+  }
+
+  String _operationUuidForChange(SyncChange change) {
+    return '${deviceId}_${change.id}';
   }
 
   String _opToString(ChangeOperation op) => switch (op) {
@@ -312,6 +611,8 @@ class SyncService {
 
   Future<void> _applyChanges(List<dynamic> changes,
       {int? localCompanyId}) async {
+    final parsedChanges = <_ParsedSyncChange>[];
+
     for (final raw in changes) {
       Map<String, dynamic> change;
       try {
@@ -322,7 +623,7 @@ class SyncService {
 
       final table = change['table'] as String;
       final operation = change['operation'] as String;
-      final recordId = change['record_id'] as int;
+      final recordId = _asInt(change['record_id']);
 
       // Deep copy data and remap server company_id → local company_id
       Map<String, dynamic> data;
@@ -331,76 +632,121 @@ class SyncService {
         if (rawData is String) {
           final decoded = jsonDecode(rawData);
           if (decoded is! Map<String, dynamic>) {
-            debugPrint(
-                '[Sync] Skipping $table#$recordId – data is not a map (String)');
-            continue;
+            throw FormatException(
+              '[Sync] Invalid change payload for $table#$recordId: decoded string is not a map',
+            );
           }
           data = Map<String, dynamic>.from(decoded);
         } else if (rawData is Map) {
           data = Map<String, dynamic>.from(rawData);
         } else {
-          debugPrint(
-              '[Sync] Skipping $table#$recordId – unexpected data type: ${rawData.runtimeType}');
-          continue;
+          throw FormatException(
+            '[Sync] Invalid change payload for $table#$recordId: unexpected data type ${rawData.runtimeType}',
+          );
         }
       } catch (e) {
-        debugPrint(
-            '[Sync] Skipping $table#$recordId – failed to parse data: $e');
-        continue;
+        throw FormatException(
+          '[Sync] Failed to parse change data for $table#$recordId: $e',
+        );
       }
 
       if (localCompanyId != null && data.containsKey('company_id')) {
         data['company_id'] = localCompanyId;
       }
 
-      try {
-        switch (table) {
-          case 'parties':
-            await _applyPartyChange(operation, data, recordId);
-          case 'products':
-            await _applyProductChange(operation, data, recordId);
-          case 'invoices':
-            await _applyInvoiceChange(operation, data, recordId);
-          case 'transactions':
-            await _applyTransactionChange(operation, data, recordId);
-          case 'transaction_lines':
-            await _applyTransactionLineChange(operation, data, recordId);
-          case 'account_transactions':
-            await _applyAccountTransactionChange(operation, data, recordId);
-          case 'payment_accounts':
-            await _applyPaymentAccountChange(operation, data, recordId);
-          case 'payment_ins':
-            await _applyPaymentInChange(operation, data, recordId);
-          case 'payment_in_lines':
-            await _applyPaymentInLineChange(operation, data, recordId);
-          case 'payment_outs':
-            await _applyPaymentOutChange(operation, data, recordId);
-          case 'payment_out_lines':
-            await _applyPaymentOutLineChange(operation, data, recordId);
-          case 'accounts':
-            await _applyAccountChange(operation, data, recordId);
-          case 'stock_ledgers':
-            await _applyStockLedgerChange(operation, data, recordId);
-          case 'units_of_measure':
-            await _applyUomChange(operation, data, recordId);
-          case 'item_categories':
-            await _applyItemCategoryChange(operation, data, recordId);
-          default:
-            break; // ignore unknown tables
-        }
-      } catch (e) {
-        // log the error — one bad record should not halt the rest
-        debugPrint(
-            '[Sync] Failed to apply change for table=$table op=$operation id=$recordId: $e');
-      }
+      parsedChanges.add(_ParsedSyncChange(
+        table: table,
+        operation: operation,
+        recordId: recordId,
+        data: data,
+      ));
     }
+
+    await _isar.writeTxn(() async {
+      for (final change in parsedChanges) {
+        try {
+          switch (change.table) {
+            case 'parties':
+              await _applyPartyChange(
+                  change.operation, change.data, change.recordId);
+            case 'products':
+              await _applyProductChange(
+                  change.operation, change.data, change.recordId);
+            case 'invoices':
+              await _applyInvoiceChange(
+                  change.operation, change.data, change.recordId);
+            case 'transactions':
+              await _applyTransactionChange(
+                  change.operation, change.data, change.recordId);
+            case 'transaction_lines':
+              await _applyTransactionLineChange(
+                  change.operation, change.data, change.recordId);
+            case 'account_transactions':
+              await _applyAccountTransactionChange(
+                  change.operation, change.data, change.recordId);
+            case 'payment_accounts':
+              await _applyPaymentAccountChange(
+                  change.operation, change.data, change.recordId);
+            case 'payment_ins':
+              await _applyPaymentInChange(
+                  change.operation, change.data, change.recordId);
+            case 'payment_in_lines':
+              await _applyPaymentInLineChange(
+                  change.operation, change.data, change.recordId);
+            case 'payment_outs':
+              await _applyPaymentOutChange(
+                  change.operation, change.data, change.recordId);
+            case 'payment_out_lines':
+              await _applyPaymentOutLineChange(
+                  change.operation, change.data, change.recordId);
+            case 'accounts':
+              await _applyAccountChange(
+                  change.operation, change.data, change.recordId);
+            case 'stock_ledgers':
+              await _applyStockLedgerChange(
+                  change.operation, change.data, change.recordId);
+            case 'units_of_measure':
+              await _applyUomChange(
+                  change.operation, change.data, change.recordId);
+            case 'item_categories':
+              await _applyItemCategoryChange(
+                  change.operation, change.data, change.recordId);
+            default:
+              break; // ignore unknown tables
+          }
+        } catch (e) {
+          throw Exception(
+            '[Sync] Failed to apply change for table=${change.table} op=${change.operation} id=${change.recordId}: $e',
+          );
+        }
+      }
+    });
   }
 
   // ── Helpers ───────────────────────────────────────────────────────────────
 
   bool _asBool(dynamic v) => v == true || v == 1;
 
-  double _asDouble(dynamic v) => (v as num?)?.toDouble() ?? 0.0;
+  double _asDouble(dynamic v) {
+    if (v == null) return 0.0;
+    if (v is num) return v.toDouble();
+    if (v is String) {
+      final parsed = double.tryParse(v.trim());
+      return parsed ?? 0.0;
+    }
+    return 0.0;
+  }
+
+  int _asInt(dynamic v, {int fallback = 0}) {
+    if (v == null) return fallback;
+    if (v is int) return v;
+    if (v is num) return v.toInt();
+    if (v is String) {
+      final parsed = int.tryParse(v.trim());
+      return parsed ?? fallback;
+    }
+    return fallback;
+  }
 
   DateTime _asDate(dynamic v) =>
       v == null ? DateTime.now() : DateTime.parse(v as String);
@@ -413,13 +759,13 @@ class SyncService {
   Future<void> _applyPartyChange(
       String op, Map<String, dynamic> d, int id) async {
     if (op == 'DELETE') {
-      await _isar.writeTxn(() => _isar.partys.delete(id));
+      await _isar.partys.delete(id);
       return;
     }
     final partyTypeStr = d['party_type'] as String?;
     final party = Party()
-      ..id = d['id'] as int
-      ..companyId = d['company_id'] as int
+      ..id = _asInt(d['id'], fallback: id)
+      ..companyId = _asInt(d['company_id'])
       ..name = d['name'] as String
       ..partyType = partyTypeStr != null
           ? PartyType.values.byName(partyTypeStr)
@@ -429,10 +775,10 @@ class SyncService {
       ..address = d['address'] as String?
       ..openingBalance = _asDouble(d['opening_balance'])
       ..creditLimit = _asDouble(d['credit_limit'])
-      ..paymentTermsDays = (d['payment_terms_days'] as int?) ?? 0
+      ..paymentTermsDays = _asInt(d['payment_terms_days'])
       ..isActive = _asBool(d['is_active'])
       ..createdAt = _asDate(d['created_at']);
-    await _isar.writeTxn(() => _isar.partys.put(party));
+    await _isar.partys.put(party);
   }
 
   // ── Product ───────────────────────────────────────────────────────────────
@@ -440,8 +786,7 @@ class SyncService {
   Future<void> _applyProductChange(
       String op, Map<String, dynamic> d, int id) async {
     if (op == 'DELETE') {
-      await _isar
-          .writeTxn(() => _isar.products.filter().idEqualTo(id).deleteFirst());
+      await _isar.products.filter().idEqualTo(id).deleteFirst();
       return;
     }
     final product = Product()
@@ -456,7 +801,7 @@ class SyncService {
       ..salePrice = _asDouble(d['sale_price'])
       ..openingQty = _asDouble(d['opening_qty'])
       ..isActive = _asBool(d['is_active']);
-    await _isar.writeTxn(() => _isar.products.put(product));
+    await _isar.products.put(product);
   }
 
   // ── Invoice ───────────────────────────────────────────────────────────────
@@ -464,7 +809,7 @@ class SyncService {
   Future<void> _applyInvoiceChange(
       String op, Map<String, dynamic> d, int id) async {
     if (op == 'DELETE') {
-      await _isar.writeTxn(() => _isar.invoices.delete(id));
+      await _isar.invoices.delete(id);
       return;
     }
     final invoice = Invoice()
@@ -481,7 +826,7 @@ class SyncService {
       ..paidAmount = _asDouble(d['paid_amount'])
       ..remainingBalance = _asDouble(d['remaining_balance'])
       ..invoiceNumber = d['invoice_number'] as String?;
-    await _isar.writeTxn(() => _isar.invoices.put(invoice));
+    await _isar.invoices.put(invoice);
   }
 
   // ── Transaction ───────────────────────────────────────────────────────────
@@ -489,7 +834,7 @@ class SyncService {
   Future<void> _applyTransactionChange(
       String op, Map<String, dynamic> d, int id) async {
     if (op == 'DELETE') {
-      await _isar.writeTxn(() => _isar.transactions.delete(id));
+      await _isar.transactions.delete(id);
       return;
     }
     final txn = tm.Transaction()
@@ -504,7 +849,7 @@ class SyncService {
       ..isPosted = _asBool(d['is_posted'])
       ..createdByUserId = d['created_by_user_id'] as int?
       ..createdAt = _asDate(d['created_at']);
-    await _isar.writeTxn(() => _isar.transactions.put(txn));
+    await _isar.transactions.put(txn);
   }
 
   // ── TransactionLine ───────────────────────────────────────────────────────
@@ -512,7 +857,7 @@ class SyncService {
   Future<void> _applyTransactionLineChange(
       String op, Map<String, dynamic> d, int id) async {
     if (op == 'DELETE') {
-      await _isar.writeTxn(() => _isar.transactionLines.delete(id));
+      await _isar.transactionLines.delete(id);
       return;
     }
     final line = tm.TransactionLine()
@@ -525,7 +870,7 @@ class SyncService {
       ..quantity = _asDouble(d['quantity'])
       ..unitPrice = _asDouble(d['unit_price'])
       ..lineAmount = _asDouble(d['line_amount']);
-    await _isar.writeTxn(() => _isar.transactionLines.put(line));
+    await _isar.transactionLines.put(line);
   }
 
   // ── AccountTransaction ────────────────────────────────────────────────────
@@ -533,7 +878,7 @@ class SyncService {
   Future<void> _applyAccountTransactionChange(
       String op, Map<String, dynamic> d, int id) async {
     if (op == 'DELETE') {
-      await _isar.writeTxn(() => _isar.accountTransactions.delete(id));
+      await _isar.accountTransactions.delete(id);
       return;
     }
     final entry = am.AccountTransaction()
@@ -551,7 +896,7 @@ class SyncService {
       ..referenceNo = d['reference_no'] as String?
       ..partyId = d['party_id'] as int?
       ..createdAt = _asDate(d['created_at']);
-    await _isar.writeTxn(() => _isar.accountTransactions.put(entry));
+    await _isar.accountTransactions.put(entry);
   }
 
   // ── PaymentAccount ────────────────────────────────────────────────────────
@@ -559,7 +904,7 @@ class SyncService {
   Future<void> _applyPaymentAccountChange(
       String op, Map<String, dynamic> d, int id) async {
     if (op == 'DELETE') {
-      await _isar.writeTxn(() => _isar.paymentAccounts.delete(id));
+      await _isar.paymentAccounts.delete(id);
       return;
     }
     final account = PaymentAccount()
@@ -575,7 +920,7 @@ class SyncService {
       ..isActive = _asBool(d['is_active'])
       ..isDefault = _asBool(d['is_default'])
       ..createdAt = _asDate(d['created_at']);
-    await _isar.writeTxn(() => _isar.paymentAccounts.put(account));
+    await _isar.paymentAccounts.put(account);
   }
 
   // ── PaymentIn ─────────────────────────────────────────────────────────────
@@ -583,7 +928,7 @@ class SyncService {
   Future<void> _applyPaymentInChange(
       String op, Map<String, dynamic> d, int id) async {
     if (op == 'DELETE') {
-      await _isar.writeTxn(() => _isar.paymentIns.delete(id));
+      await _isar.paymentIns.delete(id);
       return;
     }
     final p = PaymentIn()
@@ -597,7 +942,7 @@ class SyncService {
       ..attachmentPath = d['attachment_path'] as String?
       ..createdAt = _asDate(d['created_at'])
       ..createdByUserId = d['created_by_user_id'] as int?;
-    await _isar.writeTxn(() => _isar.paymentIns.put(p));
+    await _isar.paymentIns.put(p);
   }
 
   // ── PaymentInLine ─────────────────────────────────────────────────────────
@@ -605,7 +950,7 @@ class SyncService {
   Future<void> _applyPaymentInLineChange(
       String op, Map<String, dynamic> d, int id) async {
     if (op == 'DELETE') {
-      await _isar.writeTxn(() => _isar.paymentInLines.delete(id));
+      await _isar.paymentInLines.delete(id);
       return;
     }
     final line = PaymentInLine()
@@ -615,7 +960,7 @@ class SyncService {
       ..amount = _asDouble(d['amount'])
       ..referenceNo = d['reference_no'] as String?
       ..createdAt = _asDate(d['created_at']);
-    await _isar.writeTxn(() => _isar.paymentInLines.put(line));
+    await _isar.paymentInLines.put(line);
   }
 
   // ── PaymentOut ────────────────────────────────────────────────────────────
@@ -623,7 +968,7 @@ class SyncService {
   Future<void> _applyPaymentOutChange(
       String op, Map<String, dynamic> d, int id) async {
     if (op == 'DELETE') {
-      await _isar.writeTxn(() => _isar.paymentOuts.delete(id));
+      await _isar.paymentOuts.delete(id);
       return;
     }
     final p = PaymentOut()
@@ -637,7 +982,7 @@ class SyncService {
       ..attachmentPath = d['attachment_path'] as String?
       ..createdAt = _asDate(d['created_at'])
       ..createdByUserId = d['created_by_user_id'] as int?;
-    await _isar.writeTxn(() => _isar.paymentOuts.put(p));
+    await _isar.paymentOuts.put(p);
   }
 
   // ── PaymentOutLine ────────────────────────────────────────────────────────
@@ -645,7 +990,7 @@ class SyncService {
   Future<void> _applyPaymentOutLineChange(
       String op, Map<String, dynamic> d, int id) async {
     if (op == 'DELETE') {
-      await _isar.writeTxn(() => _isar.paymentOutLines.delete(id));
+      await _isar.paymentOutLines.delete(id);
       return;
     }
     final line = PaymentOutLine()
@@ -655,7 +1000,7 @@ class SyncService {
       ..amount = _asDouble(d['amount'])
       ..referenceNo = d['reference_no'] as String?
       ..createdAt = _asDate(d['created_at']);
-    await _isar.writeTxn(() => _isar.paymentOutLines.put(line));
+    await _isar.paymentOutLines.put(line);
   }
 
   // ── StockLedger ───────────────────────────────────────────────────────────
@@ -663,7 +1008,7 @@ class SyncService {
   Future<void> _applyStockLedgerChange(
       String op, Map<String, dynamic> d, int id) async {
     if (op == 'DELETE') {
-      await _isar.writeTxn(() => _isar.stockLedgers.delete(id));
+      await _isar.stockLedgers.delete(id);
       return;
     }
     final entry = StockLedger()
@@ -678,7 +1023,7 @@ class SyncService {
       ..totalCost = _asDouble(d['total_cost'])
       ..transactionId = d['transaction_id'] as int?
       ..invoiceId = d['invoice_id'] as int?;
-    await _isar.writeTxn(() => _isar.stockLedgers.put(entry));
+    await _isar.stockLedgers.put(entry);
   }
 
   // ── UnitOfMeasure ─────────────────────────────────────────────────────────
@@ -686,14 +1031,14 @@ class SyncService {
   Future<void> _applyUomChange(
       String op, Map<String, dynamic> d, int id) async {
     if (op == 'DELETE') {
-      await _isar.writeTxn(() => _isar.unitOfMeasures.delete(id));
+      await _isar.unitOfMeasures.delete(id);
       return;
     }
     final uom = UnitOfMeasure()
       ..id = d['id'] as int
       ..name = d['name'] as String
       ..abbrev = d['abbrev'] as String;
-    await _isar.writeTxn(() => _isar.unitOfMeasures.put(uom));
+    await _isar.unitOfMeasures.put(uom);
   }
 
   // ── Account ───────────────────────────────────────────────────────────────
@@ -701,7 +1046,7 @@ class SyncService {
   Future<void> _applyAccountChange(
       String op, Map<String, dynamic> d, int id) async {
     if (op == 'DELETE') {
-      await _isar.writeTxn(() => _isar.accounts.delete(id));
+      await _isar.accounts.delete(id);
       return;
     }
     final accountTypeStr = d['account_type'] as String?;
@@ -720,7 +1065,7 @@ class SyncService {
       ..isSystem = _asBool(d['is_system'])
       ..isActive = _asBool(d['is_active'])
       ..createdAt = _asDate(d['created_at']);
-    await _isar.writeTxn(() => _isar.accounts.put(account));
+    await _isar.accounts.put(account);
   }
 
   // ── ItemCategory ──────────────────────────────────────────────────────────
@@ -728,7 +1073,7 @@ class SyncService {
   Future<void> _applyItemCategoryChange(
       String op, Map<String, dynamic> d, int id) async {
     if (op == 'DELETE') {
-      await _isar.writeTxn(() => _isar.itemCategorys.delete(id));
+      await _isar.itemCategorys.delete(id);
       return;
     }
     final cat = ItemCategory()
@@ -736,7 +1081,7 @@ class SyncService {
       ..companyId = d['company_id'] as int
       ..name = d['name'] as String
       ..parentCategoryId = d['parent_category_id'] as int?;
-    await _isar.writeTxn(() => _isar.itemCategorys.put(cat));
+    await _isar.itemCategorys.put(cat);
   }
 
   // ──────────────────────────────────────────────────────────────────────────
@@ -802,4 +1147,38 @@ class SyncStatus {
   });
 
   bool get hasChanges => pendingChanges > 0;
+}
+
+class LoginBootstrapResult {
+  final bool success;
+  final int companiesDownloaded;
+  final int companiesSynced;
+  final int changesApplied;
+  final List<String> syncErrors;
+  final String? error;
+
+  LoginBootstrapResult({
+    required this.success,
+    this.companiesDownloaded = 0,
+    this.companiesSynced = 0,
+    this.changesApplied = 0,
+    this.syncErrors = const [],
+    this.error,
+  });
+
+  bool get hasWarnings => syncErrors.isNotEmpty;
+}
+
+class _ParsedSyncChange {
+  final String table;
+  final String operation;
+  final int recordId;
+  final Map<String, dynamic> data;
+
+  _ParsedSyncChange({
+    required this.table,
+    required this.operation,
+    required this.recordId,
+    required this.data,
+  });
 }

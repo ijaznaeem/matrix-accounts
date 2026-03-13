@@ -1,4 +1,5 @@
 import 'dart:convert';
+
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -123,14 +124,32 @@ class ApiClient {
   }
 
   Map<String, dynamic> _handleResponse(http.Response response) {
+    final body = response.body;
+
     if (response.statusCode >= 200 && response.statusCode < 300) {
-      return jsonDecode(response.body);
-    } else {
-      throw ApiException(
-        response.statusCode,
-        response.body,
-      );
+      try {
+        final decoded = jsonDecode(body);
+        if (decoded is Map<String, dynamic>) {
+          return decoded;
+        }
+        throw ApiException(
+          response.statusCode,
+          'Invalid JSON object response: ${body.substring(0, body.length > 240 ? 240 : body.length)}',
+        );
+      } on FormatException {
+        final snippet =
+            body.substring(0, body.length > 240 ? 240 : body.length);
+        throw ApiException(
+          response.statusCode,
+          'Non-JSON response from server: $snippet',
+        );
+      }
     }
+
+    throw ApiException(
+      response.statusCode,
+      body,
+    );
   }
 }
 

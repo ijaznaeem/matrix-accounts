@@ -21,8 +21,8 @@ final productListRefreshProvider = StateProvider<int>((ref) => 0);
 final productListProvider = FutureProvider<List<Product>>((ref) async {
   // Watch the refresh trigger to reload when it changes
   ref.watch(productListRefreshProvider);
-  
-  final company = ref.read(currentCompanyProvider);
+
+  final company = ref.watch(currentCompanyProvider);
   if (company == null) return [];
   final dao = ref.read(productDaoProvider);
   return dao.getAllByCompany(company.id);

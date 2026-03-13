@@ -10,6 +10,9 @@ class AuthService {
   static const String _keyUserFullName = 'user_full_name';
   static const String _keySelectedCompanyId = 'selected_company_id';
   static const String _keySelectedCompanyName = 'selected_company_name';
+  static const String _keyAuthToken = 'auth_token';
+  static const String _keyServerEmail = 'server_email';
+  static const String _keyServerPassword = 'server_password';
 
   final SharedPreferences _prefs;
 
@@ -42,6 +45,13 @@ class AuthService {
   /// Check if a company has been selected
   bool get hasSelectedCompany => selectedCompanyId != null;
 
+  /// Stored server credentials used for auto-login/token refresh.
+  String? get serverEmail => _prefs.getString(_keyServerEmail);
+  String? get serverPassword => _prefs.getString(_keyServerPassword);
+  bool get hasServerCredentials =>
+      (serverEmail?.isNotEmpty ?? false) &&
+      (serverPassword?.isNotEmpty ?? false);
+
   /// Save user login state
   Future<bool> saveLoginState({
     required int userId,
@@ -59,6 +69,20 @@ class AuthService {
     }
   }
 
+  /// Save credentials for transparent server re-authentication.
+  Future<bool> saveServerCredentials({
+    required String email,
+    required String password,
+  }) async {
+    try {
+      await _prefs.setString(_keyServerEmail, email);
+      await _prefs.setString(_keyServerPassword, password);
+      return true;
+    } catch (e) {
+      return false;
+    }
+  }
+
   /// Clear all user login state
   Future<bool> logout() async {
     try {
@@ -68,6 +92,9 @@ class AuthService {
       await _prefs.remove(_keyUserFullName);
       await _prefs.remove(_keySelectedCompanyId);
       await _prefs.remove(_keySelectedCompanyName);
+      await _prefs.remove(_keyAuthToken);
+      await _prefs.remove(_keyServerEmail);
+      await _prefs.remove(_keyServerPassword);
       return true;
     } catch (e) {
       return false;

@@ -159,10 +159,7 @@ class SyncService
 
                 $summary['processed_tables']++;
 
-                $isGlobal = in_array($tableName, $this->globalTables, true);
-                $query = $isGlobal
-                    ? $modelClass::query()
-                    : $modelClass::where('company_id', $companyId);
+                $query = $this->companyScopedQuery($tableName, $modelClass, $companyId);
 
                 foreach ($query->cursor() as $row) {
                     try {
@@ -242,7 +239,6 @@ class SyncService
             'payment_outs',
             'payment_out_lines',
             'stock_ledgers',
-            'units_of_measure',
             'item_categories',
         ];
 
@@ -325,12 +321,21 @@ class SyncService
     }
 
     /**
-     * Apply a single change from device
+     * Tables whose rows carry company_id directly.
      */
-    /**
-     * Tables that have no company_id column (global/shared tables).
-     */
-    protected array $globalTables = ['units_of_measure'];
+    protected array $directCompanyTables = [
+        'parties',
+        'products',
+        'invoices',
+        'transactions',
+        'accounts',
+        'account_transactions',
+        'payment_accounts',
+        'payment_ins',
+        'payment_outs',
+        'stock_ledgers',
+        'item_categories',
+    ];
 
     protected function applyChange(
         int $companyId,
@@ -349,7 +354,6 @@ class SyncService
             throw new \Exception("Unknown table: {$tableName}");
         }
 
-        $isGlobal = in_array($tableName, $this->globalTables);
         $result = [];
 
         // These will be set in each switch branch and used to log to sync_changes.
@@ -359,18 +363,11 @@ class SyncService
         switch ($operation) {
             case 'INSERT':
                 unset($data['id']);
-                if (!$isGlobal) {
+                if ($this->tableUsesDirectCompanyId($tableName)) {
                     $data['company_id'] = $companyId;
                 }
 
-                // For global tables with unique constraints, use firstOrCreate
-                // to avoid duplicate errors from multiple devices.
-                if ($isGlobal) {
-                    $uniqueKey = array_intersect_key($data, array_flip(['name']));
-                    $record = $modelClass::firstOrCreate($uniqueKey, $data);
-                } else {
-                    $record = $modelClass::create($data);
-                }
+                $record = $modelClass::create($data);
                 $result['server_id'] = $record->id;
                 $syncRecordId        = (int) $record->id;
                 // Include the server-assigned id so pulling devices receive the canonical id.
@@ -379,9 +376,7 @@ class SyncService
 
             case 'UPDATE':
                 $recordId = $data['id'] ?? $change['record_id'];
-                $query = $isGlobal
-                    ? $modelClass::query()
-                    : $modelClass::where('company_id', $companyId);
+                $query = $this->companyScopedQuery($tableName, $modelClass, $companyId);
                 $record = $query->find($recordId);
 
                 if ($record) {
@@ -395,9 +390,7 @@ class SyncService
 
             case 'DELETE':
                 $recordId = $data['id'] ?? $change['record_id'];
-                $query = $isGlobal
-                    ? $modelClass::query()
-                    : $modelClass::where('company_id', $companyId);
+                $query = $this->companyScopedQuery($tableName, $modelClass, $companyId);
                 $record = $query->find($recordId);
 
                 if ($record) {
@@ -426,6 +419,27 @@ class SyncService
         }
 
         return $result;
+    }
+
+    protected function tableUsesDirectCompanyId(string $tableName): bool
+    {
+        return in_array($tableName, $this->directCompanyTables, true);
+    }
+
+    protected function companyScopedQuery(string $tableName, string $modelClass, int $companyId)
+    {
+        return match ($tableName) {
+            'transaction_lines' => $modelClass::whereHas('transaction', function ($query) use ($companyId) {
+                $query->where('company_id', $companyId);
+            }),
+            'payment_in_lines' => $modelClass::whereHas('paymentIn', function ($query) use ($companyId) {
+                $query->where('company_id', $companyId);
+            }),
+            'payment_out_lines' => $modelClass::whereHas('paymentOut', function ($query) use ($companyId) {
+                $query->where('company_id', $companyId);
+            }),
+            default => $modelClass::where('company_id', $companyId),
+        };
     }
 
     /**

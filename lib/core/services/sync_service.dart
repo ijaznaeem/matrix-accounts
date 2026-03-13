@@ -29,7 +29,6 @@ class SyncService {
 
   Isar get _isar => isarService.isar;
   static const String _companySyncVersionPrefix = 'last_sync_version_company_';
-  static const Set<String> _globalSyncTables = {'units_of_measure'};
 
   void _logSyncDebug(String message) {
     if (kDebugMode) {
@@ -533,7 +532,7 @@ class SyncService {
 
   /// Read all unsynced SyncChange records from Isar and format them
   /// for the /api/sync/push payload.
-  /// Includes both company-scoped records and global-table records (companyId=0).
+  /// Only company-scoped records are eligible for sync.
   Future<List<Map<String, dynamic>>> _getLocalChanges(int companyId) async {
     final companyRecords = await _isar.syncChanges
         .filter()
@@ -541,24 +540,11 @@ class SyncService {
         .syncedEqualTo(false)
         .findAll();
 
-    // Also include global-table records (e.g. units_of_measure with companyId=0)
-    final globalRecords = await _isar.syncChanges
-        .filter()
-        .companyIdEqualTo(0)
-        .syncedEqualTo(false)
-        .findAll();
-
-    final allUnsynced = [...companyRecords, ...globalRecords];
-
-    return allUnsynced.map((c) {
+    return companyRecords.map((c) {
       final decodedData = jsonDecode(c.data);
       final data = decodedData is Map
           ? Map<String, dynamic>.from(decodedData)
           : <String, dynamic>{};
-
-      if (_globalSyncTables.contains(c.table)) {
-        data.remove('company_id');
-      }
 
       return {
         'local_id': 'local_${c.id}', // stable reference for id_mappings

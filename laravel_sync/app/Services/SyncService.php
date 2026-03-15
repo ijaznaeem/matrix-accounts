@@ -239,6 +239,8 @@ class SyncService
             'payment_outs',
             'payment_out_lines',
             'stock_ledgers',
+            'users',
+            'company_users',
             'item_categories',
         ];
 
@@ -334,6 +336,7 @@ class SyncService
         'payment_ins',
         'payment_outs',
         'stock_ledgers',
+        'company_users',
         'item_categories',
     ];
 
@@ -429,6 +432,10 @@ class SyncService
     protected function companyScopedQuery(string $tableName, string $modelClass, int $companyId)
     {
         return match ($tableName) {
+            'users' => $modelClass::whereHas('companies', function ($query) use ($companyId) {
+                $query->where('companies.id', $companyId);
+            }),
+            'company_users' => $modelClass::where('company_id', $companyId),
             'transaction_lines' => $modelClass::whereHas('transaction', function ($query) use ($companyId) {
                 $query->where('company_id', $companyId);
             }),
@@ -463,6 +470,8 @@ class SyncService
             'stock_ledgers' => \App\Models\StockLedger::class,
             'units_of_measure' => \App\Models\UnitOfMeasure::class,
             'item_categories' => \App\Models\ItemCategory::class,
+            'users' => \App\Models\User::class,
+            'company_users' => \App\Models\CompanyUser::class,
         ];
 
         return $mappings[$tableName] ?? null;

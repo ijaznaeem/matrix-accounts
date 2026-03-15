@@ -3,6 +3,7 @@ import 'package:isar/isar.dart';
 import '../../../core/database/dao/account_dao.dart';
 import '../../../core/database/dao/payment_dao.dart';
 import '../../../data/models/company_model.dart';
+import '../../../data/models/user_model.dart';
 
 /// Service for managing company data in Isar database
 class CompanyService {
@@ -56,6 +57,25 @@ class CompanyService {
 
     await _isar.writeTxn(() async {
       await _isar.companys.put(company);
+
+      final existingMapping = await _isar.companyUsers
+          .filter()
+          .companyIdEqualTo(company.id)
+          .userIdEqualTo(subscriberId)
+          .findFirst();
+
+      if (existingMapping != null) {
+        existingMapping.role = 'admin';
+        existingMapping.isActive = true;
+        await _isar.companyUsers.put(existingMapping);
+      } else {
+        final mapping = CompanyUser()
+          ..companyId = company.id
+          ..userId = subscriberId
+          ..role = 'admin'
+          ..isActive = true;
+        await _isar.companyUsers.put(mapping);
+      }
     });
 
     // Seed chart of accounts and default payment accounts for the new company

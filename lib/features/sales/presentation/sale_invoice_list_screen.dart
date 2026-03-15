@@ -6,7 +6,6 @@ import 'package:go_router/go_router.dart';
 import 'package:intl/intl.dart';
 
 import '../../../core/config/providers.dart';
-import '../../../core/database/dao/party_dao.dart';
 import '../../../core/widgets/navigation_drawer_helper.dart';
 import '../../../data/models/invoice_stock_models.dart';
 import '../../../data/models/party_model.dart';
@@ -24,7 +23,6 @@ class _SaleInvoiceListScreenState extends ConsumerState<SaleInvoiceListScreen> {
   late final TextEditingController _searchController;
   String _searchQuery = '';
   final _currencyFormat = NumberFormat.currency(symbol: 'PKR ');
-  final _dateFormat = DateFormat('dd MMM yyyy');
   final _cardMargin = const EdgeInsets.symmetric(vertical: 8);
   final _cardBorderRadius = 12.0;
 
@@ -58,61 +56,6 @@ class _SaleInvoiceListScreenState extends ConsumerState<SaleInvoiceListScreen> {
         backgroundColor: isError ? Colors.red : Colors.green,
       ),
     );
-  }
-
-  /// Get current customer balance from accounting ledger
-  Future<double> _getCustomerBalance(int customerId) async {
-    final company = ref.read(currentCompanyProvider);
-    if (company == null) return 0.0;
-
-    final isarService = ref.read(isarServiceProvider);
-    final partyDao = PartyDao(isarService.isar);
-
-    try {
-      return await partyDao.getPartyBalance(
-        partyId: customerId,
-        companyId: company.id,
-      );
-    } catch (e) {
-      print('Error getting customer balance: $e');
-      return 0.0;
-    }
-  }
-
-  Future<void> _deleteInvoice(Invoice invoice) async {
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Delete Invoice'),
-        content: Text(
-          'Are you sure you want to delete this invoice?\nAmount: ${_currencyFormat.format(invoice.grandTotal)}',
-        ),
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context, false),
-            child: const Text('Cancel'),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.pop(context, true),
-            style: FilledButton.styleFrom(backgroundColor: Colors.red),
-            child: const Text('Delete'),
-          ),
-        ],
-      ),
-    );
-
-    if (confirmed == true && mounted) {
-      try {
-        final isar = ref.read(isarServiceProvider).isar;
-        final service = SalesInvoiceService(isar);
-        await service.deleteSaleInvoice(invoice.id);
-        _showSnackBar('Invoice deleted successfully');
-        setState(() {}); // Refresh list
-      } catch (e) {
-        _showSnackBar('Error deleting invoice: $e', isError: true);
-      }
-    }
   }
 
   // Future<void> _shareInvoice(Invoice invoice) async {
@@ -623,46 +566,6 @@ class _SaleInvoiceListScreenState extends ConsumerState<SaleInvoiceListScreen> {
     );
   }
 
-  Widget _buildSearchBar(ColorScheme colorScheme) {
-    return Container(
-      padding: const EdgeInsets.all(16),
-      color: colorScheme.surface,
-      child: TextField(
-        controller: _searchController,
-        textInputAction: TextInputAction.search,
-        decoration: InputDecoration(
-          hintText: 'Search invoice...',
-          prefixIcon: const Icon(Icons.search),
-          suffixIcon: _searchQuery.isNotEmpty
-              ? IconButton(
-                  icon: const Icon(Icons.clear),
-                  onPressed: () {
-                    if (mounted && _searchController.text.isNotEmpty) {
-                      _searchController.clear();
-                      setState(() => _searchQuery = '');
-                    }
-                  },
-                )
-              : null,
-          border: OutlineInputBorder(
-            borderRadius: BorderRadius.circular(12),
-          ),
-          filled: true,
-          fillColor: colorScheme.surface,
-          contentPadding: const EdgeInsets.symmetric(
-            horizontal: 16,
-            vertical: 12,
-          ),
-        ),
-        onChanged: (value) {
-          if (mounted) {
-            setState(() => _searchQuery = value);
-          }
-        },
-      ),
-    );
-  }
-
   Widget _buildInvoiceCard(
     Invoice invoice,
     ColorScheme colorScheme,
@@ -755,7 +658,6 @@ class _SaleInvoiceListScreenState extends ConsumerState<SaleInvoiceListScreen> {
                   builder: (context, snapshot) {
                     final party = snapshot.data;
                     final partyName = party?.name ?? 'Loading...';
-                    final openingBalance = party?.openingBalance ?? 0.0;
 
                     return Row(
                       children: [

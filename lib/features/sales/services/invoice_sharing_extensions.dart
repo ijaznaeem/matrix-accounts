@@ -20,7 +20,6 @@ import 'invoice_generator.dart';
 enum ShareType { general, whatsapp }
 
 class InvoiceSharingExtensions {
-  static final _dateFormat = DateFormat('dd MMM, yyyy hh:mm a');
   static final _currencyFormat = NumberFormat('#,##,##0.00');
 
   // Show progress dialog and handle sharing with better error management

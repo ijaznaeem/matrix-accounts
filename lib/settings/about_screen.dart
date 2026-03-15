@@ -132,8 +132,8 @@ class _AboutScreenState extends ConsumerState<AboutScreen> {
                     ),
                     _InfoRow(
                       label: 'Package Name',
-                      value: packageInfo?.packageName ??
-                          'com.example.matrix_accounts',
+                      value:
+                          packageInfo?.packageName ?? 'com.example.veyo_sync',
                     ),
                     _InfoRow(
                       label: 'Build Date',

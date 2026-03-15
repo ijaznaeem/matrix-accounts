@@ -1,23 +1,24 @@
-// ignore_for_file: deprecated_member_use
+// ignore_for_file: deprecated_member_use, unused_field
 
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:intl/intl.dart';
 import 'package:isar/isar.dart';
-import 'package:matrix_accounts/data/models/transaction_model.dart'
+import 'package:pdf/pdf.dart';
+import 'package:pdf/widgets.dart' as pw;
+import 'package:printing/printing.dart';
+import 'package:veyo_sync/data/models/transaction_model.dart'
     show
         GetTransactionLineCollection,
         TransactionLineQueryFilter,
         TransactionLine;
-import 'package:pdf/pdf.dart';
-import 'package:pdf/widgets.dart' as pw;
-import 'package:printing/printing.dart';
 
 import '../../core/config/providers.dart';
 import '../../data/models/company_model.dart';
-import '../../data/models/invoice_stock_models.dart';
 import '../../data/models/inventory_models.dart';
+import '../../data/models/invoice_stock_models.dart';
 import '../../data/models/party_model.dart';
+import '../sales/services/sales_invoice_service.dart';
 
 class SaleReportScreen extends ConsumerStatefulWidget {
   const SaleReportScreen({super.key});
@@ -30,7 +31,6 @@ class _SaleReportScreenState extends ConsumerState<SaleReportScreen> {
   DateTime? _fromDate;
   DateTime? _toDate;
   Party? _selectedCustomer;
-  String _reportType = 'summary'; // summary, detailed, customer
   final _dateFormat = DateFormat('dd MMM yyyy');
   final _currencyFormat = NumberFormat.currency(symbol: 'PKR ');
 
@@ -50,7 +50,7 @@ class _SaleReportScreenState extends ConsumerState<SaleReportScreen> {
     return Scaffold(
       appBar: AppBar(
         title: const Text('Sales Reports'),
-        backgroundColor: Colors.blue.shade600,
+        backgroundColor: Colors.green.shade700,
         elevation: 0,
         actions: [
           IconButton(
@@ -164,7 +164,7 @@ class _SaleReportScreenState extends ConsumerState<SaleReportScreen> {
                 icon: const Icon(Icons.list_alt, size: 18),
                 label: const Text('All'),
                 style: ElevatedButton.styleFrom(
-                  backgroundColor: Colors.blue.shade600,
+                  backgroundColor: Colors.green.shade600,
                   foregroundColor: Colors.white,
                   elevation: 0,
                 ),
@@ -175,7 +175,7 @@ class _SaleReportScreenState extends ConsumerState<SaleReportScreen> {
                 icon: const Icon(Icons.search, size: 18),
                 label: const Text('Apply Filters'),
                 style: ElevatedButton.styleFrom(
-                  backgroundColor: Colors.green.shade600,
+                  backgroundColor: Colors.green.shade700,
                   foregroundColor: Colors.white,
                 ),
               ),
@@ -195,51 +195,12 @@ class _SaleReportScreenState extends ConsumerState<SaleReportScreen> {
         }
 
         if (snapshot.hasError) {
-          return Center(
-            child: Column(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                Icon(Icons.error_outline, size: 64, color: Colors.red[300]),
-                const SizedBox(height: 16),
-                Text('Error: ${snapshot.error}'),
-                const SizedBox(height: 16),
-                ElevatedButton(
-                  onPressed: () => setState(() {}),
-                  child: const Text('Retry'),
-                ),
-              ],
-            ),
-          );
+          return Center(child: Text('Error: ${snapshot.error}'));
         }
 
         final data = snapshot.data!;
         if (data.invoices.isEmpty) {
-          return Center(
-            child: Column(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                Icon(Icons.receipt_long_outlined,
-                    size: 64, color: Colors.grey[400]),
-                const SizedBox(height: 16),
-                Text(
-                  'No sales data found',
-                  style: TextStyle(
-                    fontSize: 18,
-                    color: Colors.grey[600],
-                  ),
-                ),
-                const SizedBox(height: 8),
-                Text(
-                  _fromDate != null || _toDate != null
-                      ? 'Try adjusting your date filters'
-                      : 'No sales records available',
-                  style: TextStyle(
-                    color: Colors.grey[500],
-                  ),
-                ),
-              ],
-            ),
-          );
+          return const Center(child: Text('No sales data found'));
         }
 
         return _buildDetailedReport(data);
@@ -320,7 +281,7 @@ class _SaleReportScreenState extends ConsumerState<SaleReportScreen> {
                             RichText(
                               text: TextSpan(
                                 children: [
-                                  TextSpan(
+                                  const TextSpan(
                                     text: 'Qty: ',
                                     style: TextStyle(
                                         fontWeight: FontWeight.w600,
@@ -330,7 +291,8 @@ class _SaleReportScreenState extends ConsumerState<SaleReportScreen> {
                                     text: totalQty == totalQty.roundToDouble()
                                         ? totalQty.toStringAsFixed(0)
                                         : totalQty.toStringAsFixed(2),
-                                    style: TextStyle(color: Colors.black87),
+                                    style:
+                                        const TextStyle(color: Colors.black87),
                                   ),
                                 ],
                               ),
@@ -338,7 +300,7 @@ class _SaleReportScreenState extends ConsumerState<SaleReportScreen> {
                             RichText(
                               text: TextSpan(
                                 children: [
-                                  TextSpan(
+                                  const TextSpan(
                                     text: 'Avg Rate: ',
                                     style: TextStyle(
                                         fontWeight: FontWeight.w600,
@@ -346,7 +308,8 @@ class _SaleReportScreenState extends ConsumerState<SaleReportScreen> {
                                   ),
                                   TextSpan(
                                     text: avgRate.toStringAsFixed(2),
-                                    style: TextStyle(color: Colors.black87),
+                                    style:
+                                        const TextStyle(color: Colors.black87),
                                   ),
                                 ],
                               ),
@@ -354,15 +317,16 @@ class _SaleReportScreenState extends ConsumerState<SaleReportScreen> {
                             RichText(
                               text: TextSpan(
                                 children: [
-                                  TextSpan(
+                                  const TextSpan(
                                     text: 'Amount: ',
                                     style: TextStyle(
                                         fontWeight: FontWeight.w600,
                                         color: Colors.black87),
                                   ),
                                   TextSpan(
-                                    text: totalAmount.toStringAsFixed(1),
-                                    style: TextStyle(color: Colors.black87),
+                                    text: totalAmount.toStringAsFixed(2),
+                                    style:
+                                        const TextStyle(color: Colors.black87),
                                   ),
                                 ],
                               ),
@@ -428,7 +392,10 @@ class _SaleReportScreenState extends ConsumerState<SaleReportScreen> {
                                           size: 20,
                                         ),
                                         onPressed: () => _generateInvoicePDF(
-                                            company, invoice, customer, lines),
+                                            data.company!,
+                                            invoice,
+                                            customer,
+                                            lines),
                                         tooltip:
                                             'Generate PDF for this invoice',
                                         padding: EdgeInsets.zero,
@@ -473,7 +440,7 @@ class _SaleReportScreenState extends ConsumerState<SaleReportScreen> {
                                             child: Text(
                                               'Product',
                                               style: TextStyle(
-                                                fontSize: 10,
+                                                fontSize: 11,
                                                 fontWeight: FontWeight.w600,
                                                 color: Colors.grey,
                                               ),
@@ -483,7 +450,7 @@ class _SaleReportScreenState extends ConsumerState<SaleReportScreen> {
                                             child: Text(
                                               'Qty',
                                               style: TextStyle(
-                                                fontSize: 10,
+                                                fontSize: 11,
                                                 fontWeight: FontWeight.w600,
                                                 color: Colors.grey,
                                               ),
@@ -494,7 +461,7 @@ class _SaleReportScreenState extends ConsumerState<SaleReportScreen> {
                                             child: Text(
                                               'Rate',
                                               style: TextStyle(
-                                                fontSize: 10,
+                                                fontSize: 11,
                                                 fontWeight: FontWeight.w600,
                                                 color: Colors.grey,
                                               ),
@@ -505,7 +472,7 @@ class _SaleReportScreenState extends ConsumerState<SaleReportScreen> {
                                             child: Text(
                                               'Amount',
                                               style: TextStyle(
-                                                fontSize: 10,
+                                                fontSize: 11,
                                                 fontWeight: FontWeight.w600,
                                                 color: Colors.grey,
                                               ),
@@ -517,9 +484,7 @@ class _SaleReportScreenState extends ConsumerState<SaleReportScreen> {
                                       const Divider(height: 8, thickness: 0.5),
                                       ...lines.take(5).map((line) =>
                                           FutureBuilder<Product?>(
-                                            future: line.productId != null
-                                                ? _getProduct(line.productId!)
-                                                : Future.value(null),
+                                            future: _getProduct(line.productId),
                                             builder:
                                                 (context, productSnapshot) {
                                               final product =
@@ -633,19 +598,15 @@ class _SaleReportScreenState extends ConsumerState<SaleReportScreen> {
         .findAll();
   }
 
-  Future<Product?> _getProduct(int productId) async {
+  Future<Product?> _getProduct(int? productId) async {
+    if (productId == null || productId == 0) return null;
     final isar = ref.read(isarServiceProvider).isar;
     return await isar.products.get(productId);
   }
 
   Future<_SaleReportData> _loadReportData(int companyId, Isar isar) async {
-    // Get all sale invoices for the company
-    var invoices = await isar.invoices
-        .filter()
-        .companyIdEqualTo(companyId)
-        .invoiceTypeEqualTo(InvoiceType.sale)
-        .sortByInvoiceDateDesc()
-        .findAll();
+    final service = SalesInvoiceService(isar);
+    var invoices = await service.getAllSaleInvoices(companyId);
 
     // Apply date filters
     if (_fromDate != null) {
@@ -671,24 +632,21 @@ class _SaleReportScreenState extends ConsumerState<SaleReportScreen> {
           .toList();
     }
 
-    // Get unique customer IDs
-    final customerIds = invoices.map((inv) => inv.partyId).toSet();
-
     // Load customers
+    final customerIds = invoices.map((inv) => inv.partyId).toSet();
     final customers = <int, Party>{};
-    for (final customerId in customerIds) {
-      if (customerId > 0) {
-        // Ensure valid ID
-        final customer = await isar.partys.get(customerId);
-        if (customer != null) {
-          customers[customerId] = customer;
-        }
+
+    for (final id in customerIds) {
+      final customer = await isar.partys.get(id);
+      if (customer != null) {
+        customers[id] = customer;
       }
     }
 
     return _SaleReportData(
       invoices: invoices,
       customers: customers,
+      company: await isar.companys.get(companyId),
     );
   }
 
@@ -707,14 +665,13 @@ class _SaleReportScreenState extends ConsumerState<SaleReportScreen> {
       final lines = await _getTransactionLines(invoice.transactionId);
 
       for (var line in lines) {
-        final product =
-            line.productId != null ? await _getProduct(line.productId!) : null;
         reportData.add({
           'date': invoice.invoiceDate,
           'partyName': customer?.name ?? 'Unknown Customer',
+          'saleMan': 'Dilawar Hussain',
           'weight': line.quantity,
           'rate': line.unitPrice,
-          'amount': line.lineAmount,
+          'totalAmount': line.lineAmount,
         });
         totalWeight += line.quantity;
         grandTotal += line.lineAmount;
@@ -722,6 +679,7 @@ class _SaleReportScreenState extends ConsumerState<SaleReportScreen> {
     }
 
     final pdf = pw.Document();
+
     pdf.addPage(
       pw.MultiPage(
         pageFormat: PdfPageFormat.a4,
@@ -740,9 +698,9 @@ class _SaleReportScreenState extends ConsumerState<SaleReportScreen> {
             ),
             pw.SizedBox(height: 16),
 
-            // Duration
+            // Date
             pw.Text(
-              'Duration: ${_fromDate != null ? _dateFormat.format(_fromDate!) : 'All Time'} to ${_toDate != null ? _dateFormat.format(_toDate!) : _dateFormat.format(DateTime.now())}',
+              'Date: ${_fromDate != null ? _dateFormat.format(_fromDate!) : _dateFormat.format(DateTime.now())}',
               style: const pw.TextStyle(fontSize: 14),
             ),
             pw.SizedBox(height: 20),
@@ -756,7 +714,7 @@ class _SaleReportScreenState extends ConsumerState<SaleReportScreen> {
                 2: const pw.FlexColumnWidth(2), // Sale Man
                 3: const pw.FlexColumnWidth(1.2), // Weight
                 4: const pw.FlexColumnWidth(1.2), // Rate
-                5: const pw.FlexColumnWidth(1.5), // Amount
+                5: const pw.FlexColumnWidth(1.8), // Total Amount
               },
               children: [
                 // Header row
@@ -792,7 +750,7 @@ class _SaleReportScreenState extends ConsumerState<SaleReportScreen> {
                     ),
                     pw.Padding(
                       padding: const pw.EdgeInsets.all(8),
-                      child: pw.Text('Amount',
+                      child: pw.Text('Total Amount',
                           style: pw.TextStyle(fontWeight: pw.FontWeight.bold),
                           textAlign: pw.TextAlign.right),
                     ),
@@ -812,7 +770,7 @@ class _SaleReportScreenState extends ConsumerState<SaleReportScreen> {
                         ),
                         pw.Padding(
                           padding: const pw.EdgeInsets.all(6),
-                          child: pw.Text('-'), // Sale Man placeholder
+                          child: pw.Text(item['saleMan']),
                         ),
                         pw.Padding(
                           padding: const pw.EdgeInsets.all(6),
@@ -829,7 +787,7 @@ class _SaleReportScreenState extends ConsumerState<SaleReportScreen> {
                         ),
                         pw.Padding(
                           padding: const pw.EdgeInsets.all(6),
-                          child: pw.Text(item['amount'].toStringAsFixed(2),
+                          child: pw.Text(item['totalAmount'].toStringAsFixed(2),
                               textAlign: pw.TextAlign.right),
                         ),
                       ],
@@ -871,17 +829,6 @@ class _SaleReportScreenState extends ConsumerState<SaleReportScreen> {
                   ],
                 ),
               ],
-            ),
-
-            pw.SizedBox(height: 20),
-
-            // Grand Total
-            pw.Text(
-              'Grand Total Sale: Rs ${grandTotal.toStringAsFixed(2)}',
-              style: pw.TextStyle(
-                fontSize: 16,
-                fontWeight: pw.FontWeight.bold,
-              ),
             ),
           ];
         },
@@ -951,43 +898,122 @@ class _SaleReportScreenState extends ConsumerState<SaleReportScreen> {
       totalWeight += line.quantity;
     }
 
-    // Pre-load products for all lines
-    final List<pw.TableRow> dataRows = [];
-    for (final line in lines) {
-      final product =
-          line.productId != null ? await _getProduct(line.productId!) : null;
-      dataRows.add(pw.TableRow(
+    // Pre-build the table rows to avoid async operations in the build function
+    List<pw.TableRow> tableRows = [
+      // Header
+      pw.TableRow(
+        decoration: const pw.BoxDecoration(color: PdfColors.grey100),
         children: [
           pw.Padding(
             padding: const pw.EdgeInsets.all(8),
-            child: pw.Text(product?.name ?? 'Unknown Product'),
+            child: pw.Text(
+              'Product',
+              style: pw.TextStyle(fontWeight: pw.FontWeight.bold),
+            ),
           ),
           pw.Padding(
             padding: const pw.EdgeInsets.all(8),
             child: pw.Text(
-              line.quantity == line.quantity.roundToDouble()
-                  ? line.quantity.toStringAsFixed(0)
-                  : line.quantity.toStringAsFixed(2),
+              'Qty',
+              style: pw.TextStyle(fontWeight: pw.FontWeight.bold),
               textAlign: pw.TextAlign.center,
             ),
           ),
           pw.Padding(
             padding: const pw.EdgeInsets.all(8),
             child: pw.Text(
-              line.unitPrice.toStringAsFixed(2),
+              'Rate',
+              style: pw.TextStyle(fontWeight: pw.FontWeight.bold),
               textAlign: pw.TextAlign.center,
             ),
           ),
           pw.Padding(
             padding: const pw.EdgeInsets.all(8),
             child: pw.Text(
-              line.lineAmount.toStringAsFixed(2),
+              'Amount',
+              style: pw.TextStyle(fontWeight: pw.FontWeight.bold),
               textAlign: pw.TextAlign.right,
             ),
           ),
         ],
-      ));
+      ),
+    ];
+
+    // Add data rows
+    for (var line in lines) {
+      final product = await _getProduct(line.productId);
+      tableRows.add(
+        pw.TableRow(
+          children: [
+            pw.Padding(
+              padding: const pw.EdgeInsets.all(8),
+              child: pw.Text(product?.name ?? 'Unknown Product'),
+            ),
+            pw.Padding(
+              padding: const pw.EdgeInsets.all(8),
+              child: pw.Text(
+                line.quantity == line.quantity.roundToDouble()
+                    ? line.quantity.toStringAsFixed(0)
+                    : line.quantity.toStringAsFixed(2),
+                textAlign: pw.TextAlign.center,
+              ),
+            ),
+            pw.Padding(
+              padding: const pw.EdgeInsets.all(8),
+              child: pw.Text(
+                line.unitPrice.toStringAsFixed(2),
+                textAlign: pw.TextAlign.center,
+              ),
+            ),
+            pw.Padding(
+              padding: const pw.EdgeInsets.all(8),
+              child: pw.Text(
+                line.lineAmount.toStringAsFixed(2),
+                textAlign: pw.TextAlign.right,
+              ),
+            ),
+          ],
+        ),
+      );
     }
+
+    // Add total row
+    tableRows.add(
+      pw.TableRow(
+        decoration: const pw.BoxDecoration(color: PdfColors.grey50),
+        children: [
+          pw.Padding(
+            padding: const pw.EdgeInsets.all(8),
+            child: pw.Text(
+              'Total',
+              style: pw.TextStyle(fontWeight: pw.FontWeight.bold),
+            ),
+          ),
+          pw.Padding(
+            padding: const pw.EdgeInsets.all(8),
+            child: pw.Text(
+              totalWeight == totalWeight.roundToDouble()
+                  ? totalWeight.toStringAsFixed(0)
+                  : totalWeight.toStringAsFixed(2),
+              style: pw.TextStyle(fontWeight: pw.FontWeight.bold),
+              textAlign: pw.TextAlign.center,
+            ),
+          ),
+          pw.Padding(
+            padding: const pw.EdgeInsets.all(8),
+            child: pw.Text(''),
+          ),
+          pw.Padding(
+            padding: const pw.EdgeInsets.all(8),
+            child: pw.Text(
+              totalAmount.toStringAsFixed(2),
+              style: pw.TextStyle(fontWeight: pw.FontWeight.bold),
+              textAlign: pw.TextAlign.right,
+            ),
+          ),
+        ],
+      ),
+    );
 
     pdf.addPage(
       pw.MultiPage(
@@ -1009,10 +1035,6 @@ class _SaleReportScreenState extends ConsumerState<SaleReportScreen> {
                         fontWeight: pw.FontWeight.bold,
                       ),
                     ),
-                    pw.Text(
-                      'Company Details',
-                      style: const pw.TextStyle(fontSize: 12),
-                    ),
                   ],
                 ),
               ),
@@ -1020,7 +1042,7 @@ class _SaleReportScreenState extends ConsumerState<SaleReportScreen> {
                 crossAxisAlignment: pw.CrossAxisAlignment.end,
                 children: [
                   pw.Text(
-                    'Invoice #${invoice.invoiceNumber}',
+                    'Sale Invoice #${invoice.invoiceNumber}',
                     style: pw.TextStyle(
                       fontSize: 18,
                       fontWeight: pw.FontWeight.bold,
@@ -1057,82 +1079,7 @@ class _SaleReportScreenState extends ConsumerState<SaleReportScreen> {
               2: const pw.FlexColumnWidth(1),
               3: const pw.FlexColumnWidth(1.5),
             },
-            children: [
-              // Header
-              pw.TableRow(
-                decoration: const pw.BoxDecoration(color: PdfColors.grey100),
-                children: [
-                  pw.Padding(
-                    padding: const pw.EdgeInsets.all(8),
-                    child: pw.Text(
-                      'Product',
-                      style: pw.TextStyle(fontWeight: pw.FontWeight.bold),
-                    ),
-                  ),
-                  pw.Padding(
-                    padding: const pw.EdgeInsets.all(8),
-                    child: pw.Text(
-                      'Qty',
-                      style: pw.TextStyle(fontWeight: pw.FontWeight.bold),
-                      textAlign: pw.TextAlign.center,
-                    ),
-                  ),
-                  pw.Padding(
-                    padding: const pw.EdgeInsets.all(8),
-                    child: pw.Text(
-                      'Rate',
-                      style: pw.TextStyle(fontWeight: pw.FontWeight.bold),
-                      textAlign: pw.TextAlign.center,
-                    ),
-                  ),
-                  pw.Padding(
-                    padding: const pw.EdgeInsets.all(8),
-                    child: pw.Text(
-                      'Amount',
-                      style: pw.TextStyle(fontWeight: pw.FontWeight.bold),
-                      textAlign: pw.TextAlign.right,
-                    ),
-                  ),
-                ],
-              ),
-              // Data rows
-              ...dataRows,
-              // Total row
-              pw.TableRow(
-                decoration: const pw.BoxDecoration(color: PdfColors.grey50),
-                children: [
-                  pw.Padding(
-                    padding: const pw.EdgeInsets.all(8),
-                    child: pw.Text(
-                      'Total',
-                      style: pw.TextStyle(fontWeight: pw.FontWeight.bold),
-                    ),
-                  ),
-                  pw.Padding(
-                    padding: const pw.EdgeInsets.all(8),
-                    child: pw.Text(
-                      totalWeight == totalWeight.roundToDouble()
-                          ? totalWeight.toStringAsFixed(0)
-                          : totalWeight.toStringAsFixed(2),
-                      style: pw.TextStyle(fontWeight: pw.FontWeight.bold),
-                      textAlign: pw.TextAlign.center,
-                    ),
-                  ),
-                  pw.Padding(
-                    padding: const pw.EdgeInsets.all(8),
-                    child: pw.Text(''),
-                  ),
-                  pw.Padding(
-                    padding: const pw.EdgeInsets.all(8),
-                    child: pw.Text(
-                      totalAmount.toStringAsFixed(2),
-                      style: pw.TextStyle(fontWeight: pw.FontWeight.bold),
-                      textAlign: pw.TextAlign.right,
-                    ),
-                  ),
-                ],
-              ),
-            ],
+            children: tableRows,
           ),
 
           pw.SizedBox(height: 20),
@@ -1163,9 +1110,11 @@ class _SaleReportScreenState extends ConsumerState<SaleReportScreen> {
 class _SaleReportData {
   final List<Invoice> invoices;
   final Map<int, Party> customers;
+  final Company? company;
 
   _SaleReportData({
     required this.invoices,
     required this.customers,
+    this.company,
   });
 }

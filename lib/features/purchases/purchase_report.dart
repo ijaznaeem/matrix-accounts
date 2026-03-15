@@ -4,19 +4,19 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:intl/intl.dart';
 import 'package:isar/isar.dart';
-import 'package:matrix_accounts/data/models/transaction_model.dart'
+import 'package:pdf/pdf.dart';
+import 'package:pdf/widgets.dart' as pw;
+import 'package:printing/printing.dart';
+import 'package:veyo_sync/data/models/transaction_model.dart'
     show
         GetTransactionLineCollection,
         TransactionLineQueryFilter,
         TransactionLine;
-import 'package:pdf/pdf.dart';
-import 'package:pdf/widgets.dart' as pw;
-import 'package:printing/printing.dart';
 
 import '../../core/config/providers.dart';
 import '../../data/models/company_model.dart';
-import '../../data/models/invoice_stock_models.dart';
 import '../../data/models/inventory_models.dart';
+import '../../data/models/invoice_stock_models.dart';
 import '../../data/models/party_model.dart';
 import 'services/purchase_invoice_service.dart';
 
@@ -347,8 +347,6 @@ class _PurchaseReportScreenState extends ConsumerState<PurchaseReportScreen> {
                     future: _getTransactionLines(invoice.transactionId),
                     builder: (context, linesSnapshot) {
                       final lines = linesSnapshot.data ?? [];
-                      final totalQty =
-                          lines.fold(0.0, (sum, line) => sum + line.quantity);
 
                       return Card(
                         margin: const EdgeInsets.only(bottom: 8),
@@ -595,37 +593,6 @@ class _PurchaseReportScreenState extends ConsumerState<PurchaseReportScreen> {
     );
   }
 
-  Widget _buildInfoCard(String title, String value, Color color) {
-    return Container(
-      padding: const EdgeInsets.all(12),
-      decoration: BoxDecoration(
-        color: color.withOpacity(0.1),
-        borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: color.withOpacity(0.3)),
-      ),
-      child: Column(
-        children: [
-          Text(
-            value,
-            style: TextStyle(
-              fontSize: 14,
-              fontWeight: FontWeight.bold,
-              color: color,
-            ),
-          ),
-          const SizedBox(height: 2),
-          Text(
-            title,
-            style: TextStyle(
-              fontSize: 11,
-              color: Colors.grey[600],
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
   Future<List<TransactionLine>> _getTransactionLines(int transactionId) async {
     final isar = ref.read(isarServiceProvider).isar;
     return await isar.transactionLines
@@ -701,7 +668,6 @@ class _PurchaseReportScreenState extends ConsumerState<PurchaseReportScreen> {
       final lines = await _getTransactionLines(invoice.transactionId);
 
       for (var line in lines) {
-        final product = await _getProduct(line.productId);
         reportData.add({
           'date': invoice.invoiceDate,
           'partyName': supplier?.name ?? 'Unknown Supplier',

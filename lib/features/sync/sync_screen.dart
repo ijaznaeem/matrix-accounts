@@ -54,7 +54,7 @@ class _SyncScreenState extends ConsumerState<SyncScreen> {
 
   Future<void> _handleServerLogout() async {
     final authService = ref.read(authServiceProvider);
-    await authService.logout();
+    await authService.logout(apiClient: ref.read(apiClientProvider));
     setState(() {
       _isLoggedIn = false;
       _serverEmail = null;
@@ -257,10 +257,10 @@ class _SyncScreenState extends ConsumerState<SyncScreen> {
                               ),
                             ])
                           else ...[
-                            Text(
+                            const Text(
                               'Sync requires app login with your server account. Please return to login screen.',
-                              style: const TextStyle(
-                                  color: Colors.grey, fontSize: 13),
+                              style:
+                                  TextStyle(color: Colors.grey, fontSize: 13),
                             ),
                             const SizedBox(height: 12),
                             SizedBox(

@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:http/http.dart' as http;
@@ -14,7 +15,10 @@ class ApiClient {
     required this.prefs,
   });
 
+  Future<bool>? _refreshInFlight;
+
   String? get token => prefs.getString('auth_token');
+  String? get refreshToken => prefs.getString('refresh_token');
   String? get deviceId => prefs.getString('device_id');
   String get whatsappApiKey => _whatsappApiKey;
 
@@ -36,10 +40,13 @@ class ApiClient {
     String endpoint,
     Map<String, dynamic> data,
   ) async {
-    final response = await http.post(
-      Uri.parse('$baseUrl$endpoint'),
-      headers: headers,
-      body: jsonEncode(data),
+    final response = await _sendWithAuthRetry(
+      endpoint: endpoint,
+      send: (requestHeaders) => http.post(
+        Uri.parse('$baseUrl$endpoint'),
+        headers: requestHeaders,
+        body: jsonEncode(data),
+      ),
     );
 
     return _handleResponse(response);
@@ -54,7 +61,10 @@ class ApiClient {
       uri = uri.replace(queryParameters: queryParams);
     }
 
-    final response = await http.get(uri, headers: headers);
+    final response = await _sendWithAuthRetry(
+      endpoint: endpoint,
+      send: (requestHeaders) => http.get(uri, headers: requestHeaders),
+    );
     return _handleResponse(response);
   }
 
@@ -62,22 +72,127 @@ class ApiClient {
     String endpoint,
     Map<String, dynamic> data,
   ) async {
-    final response = await http.put(
-      Uri.parse('$baseUrl$endpoint'),
-      headers: headers,
-      body: jsonEncode(data),
+    final response = await _sendWithAuthRetry(
+      endpoint: endpoint,
+      send: (requestHeaders) => http.put(
+        Uri.parse('$baseUrl$endpoint'),
+        headers: requestHeaders,
+        body: jsonEncode(data),
+      ),
     );
 
     return _handleResponse(response);
   }
 
   Future<Map<String, dynamic>> delete(String endpoint) async {
-    final response = await http.delete(
-      Uri.parse('$baseUrl$endpoint'),
-      headers: headers,
+    final response = await _sendWithAuthRetry(
+      endpoint: endpoint,
+      send: (requestHeaders) => http.delete(
+        Uri.parse('$baseUrl$endpoint'),
+        headers: requestHeaders,
+      ),
     );
 
     return _handleResponse(response);
+  }
+
+  Future<http.Response> _sendWithAuthRetry({
+    required String endpoint,
+    required Future<http.Response> Function(Map<String, String> requestHeaders)
+        send,
+  }) async {
+    var response = await send(headers);
+
+    if (_shouldAttemptRefresh(endpoint, response.statusCode)) {
+      final refreshed = await _tryRefreshToken();
+      if (refreshed) {
+        response = await send(headers);
+      }
+    }
+
+    return response;
+  }
+
+  bool _shouldAttemptRefresh(String endpoint, int statusCode) {
+    if (statusCode != 401) {
+      return false;
+    }
+
+    if ((refreshToken ?? '').isEmpty) {
+      return false;
+    }
+
+    return endpoint != '/api/auth/login' &&
+        endpoint != '/api/auth/register' &&
+        endpoint != '/api/auth/refresh';
+  }
+
+  Future<bool> _tryRefreshToken() async {
+    final inFlight = _refreshInFlight;
+    if (inFlight != null) {
+      return inFlight;
+    }
+
+    final completer = Completer<bool>();
+    _refreshInFlight = completer.future;
+
+    try {
+      final storedRefreshToken = refreshToken;
+      if (storedRefreshToken == null || storedRefreshToken.isEmpty) {
+        completer.complete(false);
+        return false;
+      }
+
+      final response = await http.post(
+        Uri.parse('$baseUrl/api/auth/refresh'),
+        headers: {
+          'Content-Type': 'application/json',
+          'Accept': 'application/json',
+          if (deviceId != null) 'X-Device-Id': deviceId!,
+        },
+        body: jsonEncode({
+          'refresh_token': storedRefreshToken,
+          if (deviceId != null) 'device_id': deviceId,
+        }),
+      );
+
+      if (response.statusCode < 200 || response.statusCode >= 300) {
+        if (response.statusCode == 401 || response.statusCode == 403) {
+          await prefs.remove('auth_token');
+          await prefs.remove('refresh_token');
+        }
+        completer.complete(false);
+        return false;
+      }
+
+      final decoded = jsonDecode(response.body);
+      if (decoded is! Map<String, dynamic>) {
+        completer.complete(false);
+        return false;
+      }
+
+      final newAccessToken = decoded['token']?.toString();
+      final newRefreshToken = decoded['refresh_token']?.toString();
+
+      if (newAccessToken == null ||
+          newAccessToken.isEmpty ||
+          newRefreshToken == null ||
+          newRefreshToken.isEmpty) {
+        completer.complete(false);
+        return false;
+      }
+
+      await prefs.setString('auth_token', newAccessToken);
+      await prefs.setString('refresh_token', newRefreshToken);
+
+      completer.complete(true);
+      return true;
+    } catch (_) {
+      completer.complete(false);
+      return false;
+    } finally {
+      _refreshInFlight = null;
+    }
   }
 
   // WhatsApp API specific methods

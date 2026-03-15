@@ -5,12 +5,10 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:intl/intl.dart';
 
 import '../../../core/config/providers.dart';
-import '../../../core/database/dao/party_dao.dart';
 import '../../../core/widgets/navigation_drawer_helper.dart';
 import '../../../data/models/invoice_stock_models.dart';
 import '../../../data/models/party_model.dart';
 import '../services/purchase_invoice_service.dart';
-import '../services/purchase_invoice_generator.dart';
 import 'purchase_invoice_form_screen.dart';
 
 class PurchaseInvoiceListScreen extends ConsumerStatefulWidget {
@@ -69,191 +67,6 @@ class _PurchaseInvoiceListScreenState
   void dispose() {
     _searchController.dispose();
     super.dispose();
-  }
-
-  /// Get current supplier balance from accounting ledger
-  Future<double> _getSupplierBalance(int supplierId) async {
-    final company = ref.read(currentCompanyProvider);
-    if (company == null) return 0.0;
-
-    final isarService = ref.read(isarServiceProvider);
-    final partyDao = PartyDao(isarService.isar);
-
-    try {
-      return await partyDao.getPartyBalance(
-        partyId: supplierId,
-        companyId: company.id,
-      );
-    } catch (e) {
-      print('Error getting supplier balance: $e');
-      return 0.0;
-    }
-  }
-
-  Future<void> _deleteInvoice(Invoice invoice) async {
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Delete Invoice'),
-        content: Text(
-          'Are you sure you want to delete this purchase invoice?\nAmount: ${_currencyFormat.format(invoice.grandTotal)}',
-        ),
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context, false),
-            child: const Text('Cancel'),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.pop(context, true),
-            style: FilledButton.styleFrom(
-              backgroundColor: Colors.red,
-            ),
-            child: const Text('Delete'),
-          ),
-        ],
-      ),
-    );
-
-    if (confirmed == true && mounted) {
-      try {
-        final isar = ref.read(isarServiceProvider).isar;
-        final service = PurchaseInvoiceService(isar);
-        await service.deletePurchaseInvoice(invoice.id);
-
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-              content: Text('Purchase invoice deleted successfully'),
-              backgroundColor: Colors.green,
-            ),
-          );
-          _refreshInvoices(); // Use refresh method instead of setState
-        }
-      } catch (e) {
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text('Error deleting invoice: $e'),
-              backgroundColor: Colors.red,
-            ),
-          );
-        }
-      }
-    }
-  }
-
-  Future<void> _printInvoice(Invoice invoice) async {
-    try {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Generating PDF for printing...')),
-      );
-
-      final isar = ref.read(isarServiceProvider).isar;
-      final service = PurchaseInvoiceService(isar);
-      final company = ref.read(currentCompanyProvider);
-
-      if (company == null) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('No company selected')),
-        );
-        return;
-      }
-
-      // Get required data
-      final supplier = await service.getPartyForInvoice(invoice.partyId);
-      final transaction = await service.getTransactionForInvoice(invoice.id);
-
-      if (supplier == null || transaction == null) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Could not load invoice data')),
-        );
-        return;
-      }
-
-      // Get transaction lines
-      final transactionLines =
-          await service.getTransactionLines(transaction.id);
-      final lineItems = transactionLines
-          .map((line) => {
-                'productName': line.description ?? 'Unknown Product',
-                'quantity': line.quantity,
-                'rate': line.unitPrice,
-                'amount': line.quantity * line.unitPrice,
-              })
-          .toList();
-    } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Error printing invoice: $e'),
-            backgroundColor: Colors.red,
-          ),
-        );
-      }
-    }
-  }
-
-  Future<void> _shareInvoice(Invoice invoice) async {
-    try {
-      final isar = ref.read(isarServiceProvider).isar;
-      final service = PurchaseInvoiceService(isar);
-      final company = ref.read(currentCompanyProvider);
-
-      if (company == null) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('No company selected')),
-        );
-        return;
-      }
-
-      // Get required data
-      final supplier = await service.getPartyForInvoice(invoice.partyId);
-      final transaction = await service.getTransactionForInvoice(invoice.id);
-
-      if (supplier == null || transaction == null) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Could not load invoice data')),
-        );
-        return;
-      }
-
-      // Get transaction lines
-      final transactionLines =
-          await service.getTransactionLines(transaction.id);
-      final lineItems = transactionLines
-          .map((line) => {
-                'productName': line.description ?? 'Unknown Product',
-                'quantity': line.quantity,
-                'rate': line.unitPrice,
-                'amount': line.quantity * line.unitPrice,
-              })
-          .toList();
-
-      // Get current supplier balance
-      final supplierBalance = await _getSupplierBalance(supplier.id);
-
-      // Show share options
-      await PurchaseInvoiceGenerator.sharePurchaseInvoice(
-        context: context,
-        company: company,
-        supplier: supplier,
-        invoice: invoice,
-        transaction: transaction,
-        lineItems: lineItems,
-        supplierBalance: supplierBalance,
-        openingBalance: supplier.openingBalance,
-      );
-    } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Error sharing invoice: $e'),
-            backgroundColor: Colors.red,
-          ),
-        );
-      }
-    }
   }
 
   @override
@@ -650,7 +463,6 @@ class _PurchaseInvoiceListScreenState
                     builder: (context, snapshot) {
                       final party = snapshot.data;
                       final partyName = party?.name ?? 'Loading...';
-                      final openingBalance = party?.openingBalance ?? 0.0;
 
                       return Row(
                         children: [

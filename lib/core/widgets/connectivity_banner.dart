@@ -37,13 +37,13 @@ class _OfflineBannerContent extends StatelessWidget {
       width: double.infinity,
       color: Colors.orange.shade800,
       padding: const EdgeInsets.symmetric(vertical: 6, horizontal: 16),
-      child: SafeArea(
+      child: const SafeArea(
         bottom: false,
         child: Row(
           children: [
-            const Icon(Icons.wifi_off_rounded, color: Colors.white, size: 16),
-            const SizedBox(width: 8),
-            const Expanded(
+            Icon(Icons.wifi_off_rounded, color: Colors.white, size: 16),
+            SizedBox(width: 8),
+            Expanded(
               child: Text(
                 'You\'re offline — changes will sync when reconnected',
                 style: TextStyle(

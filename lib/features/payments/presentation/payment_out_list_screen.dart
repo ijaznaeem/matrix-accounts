@@ -685,7 +685,6 @@ class _PaymentOutCard extends ConsumerWidget {
       ]),
       builder: (context, AsyncSnapshot<List<dynamic>> snapshot) {
         final supplier = snapshot.data?[0] as Party?;
-        final lines = snapshot.data?[1] as List<PaymentOutLine>? ?? [];
 
         return Dismissible(
           key: Key('payment_out_${payment.id}'),

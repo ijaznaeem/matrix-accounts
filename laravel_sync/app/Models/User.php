@@ -16,6 +16,8 @@ class User extends Authenticatable
     protected $fillable = [
         'email',
         'full_name',
+        'role',
+        'subscriber_id',
         'password',
         'is_active',
     ];
@@ -26,10 +28,22 @@ class User extends Authenticatable
     ];
 
     protected $casts = [
+        'role' => 'string',
+        'subscriber_id' => 'integer',
         'is_active' => 'boolean',
         'email_verified_at' => 'datetime',
         'password' => 'hashed',
     ];
+
+    public function subscriber()
+    {
+        return $this->belongsTo(User::class, 'subscriber_id');
+    }
+
+    public function tenantUsers()
+    {
+        return $this->hasMany(User::class, 'subscriber_id');
+    }
 
     public function companies()
     {

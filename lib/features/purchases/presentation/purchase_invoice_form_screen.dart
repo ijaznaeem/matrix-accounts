@@ -1,15 +1,16 @@
 // ignore_for_file: avoid_print, avoid_unnecessary_containers, use_build_context_synchronously, unused_element, deprecated_member_use, avoid_init_to_null
 
 import 'dart:io';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:go_router/go_router.dart';
 import 'package:isar/isar.dart';
 import 'package:path_provider/path_provider.dart';
+import 'package:pdf/pdf.dart';
+import 'package:pdf/widgets.dart' as pw;
+import 'package:printing/printing.dart';
 import 'package:share_plus/share_plus.dart';
-import '../../../data/models/invoice_stock_models.dart';
-import '../../../data/models/transaction_model.dart'
-    show GetTransactionCollection;
-import '../../parties/logic/party_provider.dart' show partyListProvider;
 
 import '../../../core/config/providers.dart';
 import '../../../core/database/dao/party_dao.dart';
@@ -19,9 +20,13 @@ import '../../../core/services/whatsapp_service.dart';
 import '../../../data/models/account_models.dart' as account_models;
 import '../../../data/models/company_model.dart';
 import '../../../data/models/inventory_models.dart';
+import '../../../data/models/invoice_stock_models.dart';
 import '../../../data/models/party_model.dart';
 import '../../../data/models/payment_models.dart';
+import '../../../data/models/transaction_model.dart'
+    show GetTransactionCollection;
 import '../../../data/models/user_model.dart';
+import '../../parties/logic/party_provider.dart' show partyListProvider;
 import '../../parties/presentation/party_form_screen.dart';
 import '../../payments/logic/payment_providers.dart';
 import '../../sales/logic/sales_providers.dart';
@@ -683,7 +688,8 @@ class _PurchaseInvoiceFormScreenState
   }
 
   Future<void> _savePurchaseInvoice(
-      PurchaseDao purchaseDao, Company company, User? user) async {
+      PurchaseDao purchaseDao, Company company, User? user,
+      {bool showActions = true}) async {
     // Prevent multiple simultaneous saves
     if (_isSaving) return;
 
@@ -764,7 +770,9 @@ class _PurchaseInvoiceFormScreenState
               backgroundColor: Colors.green,
             ),
           );
-          // Stay on the screen - don't navigate away
+          if (showActions) {
+            await _showPostSaveActions(purchaseDao, company, user);
+          }
         }
       } else {
         await purchaseDao.createPurchaseInvoice(
@@ -784,7 +792,9 @@ class _PurchaseInvoiceFormScreenState
               backgroundColor: Colors.green,
             ),
           );
-          // Stay on the screen - don't navigate away
+          if (showActions) {
+            await _showPostSaveActions(purchaseDao, company, user);
+          }
         }
       }
     } finally {
@@ -794,6 +804,129 @@ class _PurchaseInvoiceFormScreenState
         });
       }
     }
+  }
+
+  Future<void> _showPostSaveActions(
+      PurchaseDao purchaseDao, Company company, User? user) async {
+    if (!mounted) return;
+
+    await showModalBottomSheet<void>(
+      context: context,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (context) {
+        return SafeArea(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const SizedBox(height: 8),
+              const Text(
+                'Invoice Saved',
+                style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
+              ),
+              const SizedBox(height: 8),
+              ListTile(
+                leading: const Icon(Icons.chat, color: Colors.green),
+                title: const Text('Send on WhatsApp'),
+                onTap: () async {
+                  Navigator.pop(context);
+                  await _shareToWhatsApp(company);
+                },
+              ),
+              ListTile(
+                leading: const Icon(Icons.image, color: Colors.blue),
+                title: const Text('Share as Image'),
+                onTap: () async {
+                  Navigator.pop(context);
+                  await _shareAsImage(purchaseDao, company, user);
+                },
+              ),
+              ListTile(
+                leading: const Icon(Icons.print, color: Colors.deepPurple),
+                title: const Text('Print Invoice'),
+                onTap: () async {
+                  Navigator.pop(context);
+                  await _shareAsPDF(company);
+                },
+              ),
+              ListTile(
+                leading:
+                    const Icon(Icons.add_circle_outline, color: Colors.orange),
+                title: const Text('New Purchase'),
+                onTap: () {
+                  Navigator.pop(context);
+                  Navigator.pushReplacement(
+                    this.context,
+                    MaterialPageRoute(
+                      builder: (_) => const PurchaseInvoiceFormScreen(),
+                    ),
+                  );
+                },
+              ),
+              ListTile(
+                leading: const Icon(Icons.list_alt, color: Colors.blueGrey),
+                title: const Text('Back to Invoice List'),
+                onTap: () {
+                  Navigator.pop(context);
+                  this.context.go('/purchases');
+                },
+              ),
+              const SizedBox(height: 8),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
+  Future<void> _showAfterShareOrPrintActions() async {
+    if (!mounted) return;
+
+    await showModalBottomSheet<void>(
+      context: context,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (context) {
+        return SafeArea(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const SizedBox(height: 8),
+              const Text(
+                'What next?',
+                style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
+              ),
+              const SizedBox(height: 8),
+              ListTile(
+                leading:
+                    const Icon(Icons.add_circle_outline, color: Colors.orange),
+                title: const Text('New Purchase'),
+                onTap: () {
+                  Navigator.pop(context);
+                  Navigator.pushReplacement(
+                    this.context,
+                    MaterialPageRoute(
+                      builder: (_) => const PurchaseInvoiceFormScreen(),
+                    ),
+                  );
+                },
+              ),
+              ListTile(
+                leading: const Icon(Icons.list_alt, color: Colors.blueGrey),
+                title: const Text('Back to Invoice List'),
+                onTap: () {
+                  Navigator.pop(context);
+                  this.context.go('/purchases');
+                },
+              ),
+              const SizedBox(height: 8),
+            ],
+          ),
+        );
+      },
+    );
   }
 
   Widget _buildSupplierSelector(BuildContext context) {
@@ -2189,7 +2322,8 @@ class _PurchaseInvoiceFormScreenState
 
     try {
       // First save the invoice
-      await _savePurchaseInvoice(purchaseDao, company, user);
+      await _savePurchaseInvoice(purchaseDao, company, user,
+          showActions: false);
 
       // If save was successful and invoice ID is set, share to WhatsApp
       if (widget.invoiceId != null) {
@@ -2224,7 +2358,8 @@ class _PurchaseInvoiceFormScreenState
     try {
       // First save the invoice if needed
       if (widget.invoiceId == null && _selectedSupplier != null) {
-        await _savePurchaseInvoice(purchaseDao, company, user);
+        await _savePurchaseInvoice(purchaseDao, company, user,
+            showActions: false);
       }
 
       if (_selectedSupplier == null) {
@@ -2349,6 +2484,7 @@ class _PurchaseInvoiceFormScreenState
             backgroundColor: Colors.green,
           ),
         );
+        await _showAfterShareOrPrintActions();
       }
     } catch (e) {
       if (mounted) {
@@ -2367,7 +2503,8 @@ class _PurchaseInvoiceFormScreenState
     try {
       // First save the invoice if needed
       if (widget.invoiceId == null && _selectedSupplier != null) {
-        await _savePurchaseInvoice(purchaseDao, company, user);
+        await _savePurchaseInvoice(purchaseDao, company, user,
+            showActions: false);
       }
 
       if (_selectedSupplier == null) {
@@ -2500,7 +2637,7 @@ class _PurchaseInvoiceFormScreenState
 
     if (result != null) {
       // Refresh the parties list
-      ref.refresh(partyListProvider);
+      ref.invalidate(partyListProvider);
 
       // Select the newly added party
       setState(() {
@@ -2538,7 +2675,7 @@ class _PurchaseInvoiceFormScreenState
 
     if (result != null) {
       // Refresh the parties list
-      ref.refresh(partyListProvider);
+      ref.invalidate(partyListProvider);
 
       // Select the newly added party
       setState(() {
@@ -2564,6 +2701,37 @@ class _PurchaseInvoiceFormScreenState
       // Get the invoice data
       final invoiceData = await _getInvoiceData(company);
       if (invoiceData == null) return;
+
+      final imageBytes =
+          await PurchaseInvoiceGenerator.generatePurchaseInvoiceImage(
+        company: company,
+        supplier: invoiceData['supplier'],
+        invoice: invoiceData['invoice'],
+        transaction: invoiceData['transaction'],
+        lineItems: invoiceData['lineItems'],
+        paymentLines: invoiceData['paymentDetails'],
+        supplierBalance: invoiceData['supplierBalance'],
+        openingBalance: invoiceData['openingBalance'],
+      );
+
+      final memoryImage = pw.MemoryImage(imageBytes);
+      await Printing.layoutPdf(
+        onLayout: (PdfPageFormat format) async {
+          final doc = pw.Document();
+          doc.addPage(
+            pw.Page(
+              pageFormat: format,
+              margin: pw.EdgeInsets.zero,
+              build: (_) => pw.Center(
+                child: pw.Image(memoryImage, fit: pw.BoxFit.contain),
+              ),
+            ),
+          );
+          return doc.save();
+        },
+      );
+
+      await _showAfterShareOrPrintActions();
     } catch (e) {
       print('Error sharing PDF: $e');
       if (mounted) {
@@ -2888,7 +3056,7 @@ class _PurchaseInvoiceFormScreenState
                 payment.credit; // For purchases, we credit payment accounts
             totalPaidAmount += amount;
 
-            paymentDetails!.add({
+            paymentDetails.add({
               'accountName': paymentAccount?.accountName ?? account.name,
               'amount': amount,
             });
@@ -2975,7 +3143,7 @@ class _PurchaseInvoiceFormScreenState
 
       // Share comprehensive invoice with image attachment
       final success = await whatsappService.shareInvoice(
-        invoiceNumber: transaction.referenceNo ?? 'N/A',
+        invoiceNumber: transaction.referenceNo,
         amount: totalToUse,
         currency: 'Rs',
         customerName: supplier.name,
@@ -2987,7 +3155,7 @@ class _PurchaseInvoiceFormScreenState
 💰 Total Amount: Rs ${totalToUse.toStringAsFixed(2)}
 💳 Paid Amount: Rs ${totalPaidAmount.toStringAsFixed(2)}
 ⚖️ Balance Amount: Rs ${(totalToUse - totalPaidAmount).toStringAsFixed(2)}
-${supplierBalance != null ? '\n📊 Current Balance: Rs ${supplierBalance.toStringAsFixed(2)}' : ''}''',
+${'\n📊 Current Balance: Rs ${supplierBalance.toStringAsFixed(2)}'}''',
       );
 
       // Also share the detailed invoice image
@@ -3031,6 +3199,8 @@ ${supplierBalance != null ? '\n📊 Current Balance: Rs ${supplierBalance.toStri
               ),
             );
           }
+
+          await _showAfterShareOrPrintActions();
         } else {
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(

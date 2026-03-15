@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
-import 'package:matrix_accounts/core/config/providers.dart';
+import 'package:veyo_sync/core/config/providers.dart';
 
 class LockScreen extends ConsumerStatefulWidget {
   const LockScreen({super.key});

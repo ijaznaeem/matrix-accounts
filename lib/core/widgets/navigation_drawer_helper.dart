@@ -6,6 +6,9 @@ import 'package:go_router/go_router.dart';
 
 import '../../features/cash_bank/presentation/payment_accounts_list_screen.dart';
 import '../config/providers.dart';
+import '../providers/rbac_providers.dart';
+import '../providers/sync_providers.dart';
+import '../services/rbac_service.dart';
 
 class NavigationDrawerHelper {
   static Widget _buildTile({
@@ -336,6 +339,30 @@ class NavigationDrawerHelper {
   }) {
     final currentCompany = ref.watch(currentCompanyProvider);
     final currentUser = ref.watch(currentUserProvider);
+    final currentRoleAsync = ref.watch(currentUserRoleProvider);
+    final menuAccessAsync = ref.watch(currentMenuAccessProvider);
+    final isAdmin = currentRoleAsync.maybeWhen(
+      data: (role) => role == UserRole.admin,
+      orElse: () => false,
+    );
+    final menuAccess = menuAccessAsync.maybeWhen(
+      data: (value) => value,
+      orElse: () => <String, bool>{},
+    );
+    final accessLoaded = menuAccessAsync.maybeWhen(
+      data: (_) => true,
+      orElse: () => false,
+    );
+    final roleLabel = currentRoleAsync.maybeWhen(
+      data: (role) => role == UserRole.admin ? 'Admin' : 'User',
+      orElse: () => null,
+    );
+    bool hasAccess(String menuKey) {
+      if (isAdmin) return true;
+      if (!accessLoaded) return false;
+      return menuAccess[menuKey] ?? false;
+    }
+
     final theme = Theme.of(context);
 
     return LayoutBuilder(
@@ -491,6 +518,34 @@ class NavigationDrawerHelper {
                                             maxLines: 1,
                                             overflow: TextOverflow.ellipsis,
                                           ),
+                                        if (roleLabel != null)
+                                          Container(
+                                            margin: EdgeInsets.only(
+                                                top: isTablet ? 8 : 6),
+                                            padding: EdgeInsets.symmetric(
+                                              horizontal: isTablet ? 10 : 8,
+                                              vertical: isTablet ? 5 : 4,
+                                            ),
+                                            decoration: BoxDecoration(
+                                              color: roleLabel == 'Admin'
+                                                  ? Colors.green
+                                                      .withOpacity(0.16)
+                                                  : Colors.blue
+                                                      .withOpacity(0.14),
+                                              borderRadius:
+                                                  BorderRadius.circular(999),
+                                            ),
+                                            child: Text(
+                                              roleLabel,
+                                              style: theme.textTheme.labelSmall
+                                                  ?.copyWith(
+                                                fontWeight: FontWeight.w700,
+                                                color: roleLabel == 'Admin'
+                                                    ? Colors.green.shade900
+                                                    : Colors.blue.shade900,
+                                              ),
+                                            ),
+                                          ),
                                         if (currentCompany == null &&
                                             currentUser == null)
                                           Text(
@@ -513,568 +568,593 @@ class NavigationDrawerHelper {
                           ),
                           SizedBox(height: isTablet ? 20 : 12),
                           // Dashboard
-                          _buildTile(
-                            context: context,
-                            icon: Icons.dashboard_outlined,
-                            title: 'Dashboard',
-                            selected: selectedItem == 'dashboard',
-                            onTap: () {
-                              Navigator.pop(context);
-                              Future.microtask(() => context.go('/dashboard'));
-                            },
-                            color: theme.colorScheme.primary,
-                            horizontalPadding: tileHorizontal,
-                            isTablet: isTablet,
-                          ),
+                          if (hasAccess('dashboard'))
+                            _buildTile(
+                              context: context,
+                              icon: Icons.dashboard_outlined,
+                              title: 'Dashboard',
+                              selected: selectedItem == 'dashboard',
+                              onTap: () {
+                                Navigator.pop(context);
+                                Future.microtask(
+                                    () => context.go('/dashboard'));
+                              },
+                              color: theme.colorScheme.primary,
+                              horizontalPadding: tileHorizontal,
+                              isTablet: isTablet,
+                            ),
                           _modernDivider(
                               padding: dividerPadding, isTablet: isTablet),
 
                           // Sales Section
-                          _buildExpansionTile(
-                            context: context,
-                            title: 'Sales',
-                            icon: Icons.shopping_cart_outlined,
-                            iconColor: theme.colorScheme.secondary,
-                            isTablet: isTablet,
-                            children: [
-                              _buildMenuTile(
-                                context: context,
-                                title: 'Sale Invoice',
-                                indent: true,
-                                onTap: () {
-                                  Navigator.pop(context);
-                                  Future.microtask(
-                                      () => context.push('/sales'));
-                                },
-                                leftPadding: menuTileLeft,
-                                rightPadding: menuTileRight,
-                                isTablet: isTablet,
-                              ),
-                              _buildMenuTile(
-                                context: context,
-                                title: 'Sale Return',
-                                indent: true,
-                                onTap: () {
-                                  Navigator.pop(context);
-                                  Future.microtask(
-                                      () => context.push('/sale/return'));
-                                },
-                                leftPadding: menuTileLeft,
-                                rightPadding: menuTileRight,
-                                isTablet: isTablet,
-                              ),
-                            ],
-                          ),
+                          if (hasAccess('sales'))
+                            _buildExpansionTile(
+                              context: context,
+                              title: 'Sales',
+                              icon: Icons.shopping_cart_outlined,
+                              iconColor: theme.colorScheme.secondary,
+                              isTablet: isTablet,
+                              children: [
+                                _buildMenuTile(
+                                  context: context,
+                                  title: 'Sale Invoice',
+                                  indent: true,
+                                  onTap: () {
+                                    Navigator.pop(context);
+                                    Future.microtask(
+                                        () => context.push('/sales'));
+                                  },
+                                  leftPadding: menuTileLeft,
+                                  rightPadding: menuTileRight,
+                                  isTablet: isTablet,
+                                ),
+                                _buildMenuTile(
+                                  context: context,
+                                  title: 'Sale Return',
+                                  indent: true,
+                                  onTap: () {
+                                    Navigator.pop(context);
+                                    Future.microtask(
+                                        () => context.push('/sale/return'));
+                                  },
+                                  leftPadding: menuTileLeft,
+                                  rightPadding: menuTileRight,
+                                  isTablet: isTablet,
+                                ),
+                              ],
+                            ),
 
                           // Purchase Section
-                          _buildExpansionTile(
-                            context: context,
-                            title: 'Purchase',
-                            icon: Icons.shopping_bag_outlined,
-                            iconColor: theme.colorScheme.tertiary,
-                            isTablet: isTablet,
-                            children: [
-                              _buildMenuTile(
-                                context: context,
-                                title: 'Purchase Invoice',
-                                indent: true,
-                                onTap: () {
-                                  Navigator.pop(context);
-                                  Future.microtask(
-                                      () => context.push('/purchases'));
-                                },
-                                leftPadding: menuTileLeft,
-                                rightPadding: menuTileRight,
-                                isTablet: isTablet,
-                              ),
-                              _buildMenuTile(
-                                context: context,
-                                title: 'Purchase Return',
-                                indent: true,
-                                onTap: () {
-                                  Navigator.pop(context);
-                                  Future.microtask(
-                                      () => context.push('/purchase/return'));
-                                },
-                                leftPadding: menuTileLeft,
-                                rightPadding: menuTileRight,
-                                isTablet: isTablet,
-                              ),
-                            ],
-                          ),
-                          _buildExpansionTile(
-                            context: context,
-                            title: 'Payments',
-                            icon: Icons.shopping_cart_outlined,
-                            iconColor: theme.colorScheme.secondary,
-                            isTablet: isTablet,
-                            children: [
-                              _buildMenuTile(
-                                context: context,
-                                title: 'Payment In',
-                                indent: true,
-                                onTap: () {
-                                  Navigator.pop(context);
-                                  Future.microtask(
-                                      () => context.push('/payments/in'));
-                                },
-                                leftPadding: menuTileLeft,
-                                rightPadding: menuTileRight,
-                                isTablet: isTablet,
-                              ),
-                              _buildMenuTile(
-                                context: context,
-                                title: 'Payment Out',
-                                indent: true,
-                                onTap: () {
-                                  Navigator.pop(context);
-                                  Future.microtask(
-                                      () => context.push('/payments/out'));
-                                },
-                                leftPadding: menuTileLeft,
-                                rightPadding: menuTileRight,
-                                isTablet: isTablet,
-                              ),
-                              // Expenses
-                              _buildTile(
-                                context: context,
-                                icon: Icons.receipt_long_outlined,
-                                title: 'Expenses',
-                                selected: selectedItem == 'expenses',
-                                onTap: () {
-                                  Navigator.pop(context);
-                                  Future.microtask(
-                                      () => context.go('/expenses'));
-                                },
-                                color: theme.colorScheme.secondary,
-                                horizontalPadding: tileHorizontal,
-                                isTablet: isTablet,
-                              ),
-                            ],
-                          ),
+                          if (hasAccess('purchases'))
+                            _buildExpansionTile(
+                              context: context,
+                              title: 'Purchase',
+                              icon: Icons.shopping_bag_outlined,
+                              iconColor: theme.colorScheme.tertiary,
+                              isTablet: isTablet,
+                              children: [
+                                _buildMenuTile(
+                                  context: context,
+                                  title: 'Purchase Invoice',
+                                  indent: true,
+                                  onTap: () {
+                                    Navigator.pop(context);
+                                    Future.microtask(
+                                        () => context.push('/purchases'));
+                                  },
+                                  leftPadding: menuTileLeft,
+                                  rightPadding: menuTileRight,
+                                  isTablet: isTablet,
+                                ),
+                                _buildMenuTile(
+                                  context: context,
+                                  title: 'Purchase Return',
+                                  indent: true,
+                                  onTap: () {
+                                    Navigator.pop(context);
+                                    Future.microtask(
+                                        () => context.push('/purchase/return'));
+                                  },
+                                  leftPadding: menuTileLeft,
+                                  rightPadding: menuTileRight,
+                                  isTablet: isTablet,
+                                ),
+                              ],
+                            ),
+                          // Payments + Expenses Section
+                          if (hasAccess('payments') || hasAccess('expenses'))
+                            _buildExpansionTile(
+                              context: context,
+                              title: 'Payments',
+                              icon: Icons.shopping_cart_outlined,
+                              iconColor: theme.colorScheme.secondary,
+                              isTablet: isTablet,
+                              children: [
+                                if (hasAccess('payments'))
+                                  _buildMenuTile(
+                                    context: context,
+                                    title: 'Payment In',
+                                    indent: true,
+                                    onTap: () {
+                                      Navigator.pop(context);
+                                      Future.microtask(
+                                          () => context.push('/payments/in'));
+                                    },
+                                    leftPadding: menuTileLeft,
+                                    rightPadding: menuTileRight,
+                                    isTablet: isTablet,
+                                  ),
+                                if (hasAccess('payments'))
+                                  _buildMenuTile(
+                                    context: context,
+                                    title: 'Payment Out',
+                                    indent: true,
+                                    onTap: () {
+                                      Navigator.pop(context);
+                                      Future.microtask(
+                                          () => context.push('/payments/out'));
+                                    },
+                                    leftPadding: menuTileLeft,
+                                    rightPadding: menuTileRight,
+                                    isTablet: isTablet,
+                                  ),
+                                if (hasAccess('expenses'))
+                                  _buildTile(
+                                    context: context,
+                                    icon: Icons.receipt_long_outlined,
+                                    title: 'Expenses',
+                                    selected: selectedItem == 'expenses',
+                                    onTap: () {
+                                      Navigator.pop(context);
+                                      Future.microtask(
+                                          () => context.go('/expenses'));
+                                    },
+                                    color: theme.colorScheme.secondary,
+                                    horizontalPadding: tileHorizontal,
+                                    isTablet: isTablet,
+                                  ),
+                              ],
+                            ),
 
                           // Accounts Section
-                          _buildExpansionTile(
-                            context: context,
-                            title: 'Accounts/Parties',
-                            icon: Icons.account_balance_outlined,
-                            iconColor: theme.colorScheme.primary,
-                            isTablet: isTablet,
-                            children: [
-                              _buildMenuTile(
-                                context: context,
-                                title: 'Accounts/Parties List',
-                                indent: true,
-                                onTap: () {
-                                  Navigator.pop(context);
-                                  Future.microtask(
-                                      () => context.push('/masters/parties'));
-                                },
-                                leftPadding: menuTileLeft,
-                                rightPadding: menuTileRight,
-                                isTablet: isTablet,
-                              ),
-                              _buildMenuTile(
-                                context: context,
-                                title: 'Account Ledger',
-                                indent: true,
-                                onTap: () {
-                                  Navigator.pop(context);
-                                  Future.microtask(
-                                      () => context.push('/accounts/ledger'));
-                                },
-                                leftPadding: menuTileLeft,
-                                rightPadding: menuTileRight,
-                                isTablet: isTablet,
-                              ),
-                            ],
-                          ),
+                          if (hasAccess('accounts_parties'))
+                            _buildExpansionTile(
+                              context: context,
+                              title: 'Accounts/Parties',
+                              icon: Icons.account_balance_outlined,
+                              iconColor: theme.colorScheme.primary,
+                              isTablet: isTablet,
+                              children: [
+                                _buildMenuTile(
+                                  context: context,
+                                  title: 'Accounts/Parties List',
+                                  indent: true,
+                                  onTap: () {
+                                    Navigator.pop(context);
+                                    Future.microtask(
+                                        () => context.push('/masters/parties'));
+                                  },
+                                  leftPadding: menuTileLeft,
+                                  rightPadding: menuTileRight,
+                                  isTablet: isTablet,
+                                ),
+                                _buildMenuTile(
+                                  context: context,
+                                  title: 'Account Ledger',
+                                  indent: true,
+                                  onTap: () {
+                                    Navigator.pop(context);
+                                    Future.microtask(
+                                        () => context.push('/accounts/ledger'));
+                                  },
+                                  leftPadding: menuTileLeft,
+                                  rightPadding: menuTileRight,
+                                  isTablet: isTablet,
+                                ),
+                              ],
+                            ),
 
                           // Cash and Bank Section
-                          _buildExpansionTile(
-                            context: context,
-                            title: 'Cash and Bank',
-                            icon: Icons.account_balance_wallet_outlined,
-                            iconColor: theme.colorScheme.secondary,
-                            isTablet: isTablet,
-                            children: [
-                              _buildMenuTile(
-                                context: context,
-                                title: 'Payment Accounts',
-                                indent: true,
-                                onTap: () {
-                                  Navigator.pop(context);
-                                  Navigator.push(
-                                    context,
-                                    MaterialPageRoute(
-                                      builder: (_) =>
-                                          const PaymentAccountsListScreen(),
-                                    ),
-                                  );
-                                },
-                                leftPadding: menuTileLeft,
-                                rightPadding: menuTileRight,
-                                isTablet: isTablet,
-                              ),
-                              _buildMenuTile(
-                                context: context,
-                                title: 'Cash In Hand',
-                                indent: true,
-                                onTap: () {
-                                  Navigator.pop(context);
-                                  Future.microtask(
-                                      () => context.push('/cash-in-hand'));
-                                },
-                                leftPadding: menuTileLeft,
-                                rightPadding: menuTileRight,
-                                isTablet: isTablet,
-                              ),
-                            ],
-                          ),
+                          if (hasAccess('cash_bank'))
+                            _buildExpansionTile(
+                              context: context,
+                              title: 'Cash and Bank',
+                              icon: Icons.account_balance_wallet_outlined,
+                              iconColor: theme.colorScheme.secondary,
+                              isTablet: isTablet,
+                              children: [
+                                _buildMenuTile(
+                                  context: context,
+                                  title: 'Payment Accounts',
+                                  indent: true,
+                                  onTap: () {
+                                    Navigator.pop(context);
+                                    Navigator.push(
+                                      context,
+                                      MaterialPageRoute(
+                                        builder: (_) =>
+                                            const PaymentAccountsListScreen(),
+                                      ),
+                                    );
+                                  },
+                                  leftPadding: menuTileLeft,
+                                  rightPadding: menuTileRight,
+                                  isTablet: isTablet,
+                                ),
+                                _buildMenuTile(
+                                  context: context,
+                                  title: 'Cash In Hand',
+                                  indent: true,
+                                  onTap: () {
+                                    Navigator.pop(context);
+                                    Future.microtask(
+                                        () => context.push('/cash-in-hand'));
+                                  },
+                                  leftPadding: menuTileLeft,
+                                  rightPadding: menuTileRight,
+                                  isTablet: isTablet,
+                                ),
+                              ],
+                            ),
 
                           // Masters Section
-                          _buildExpansionTile(
-                            context: context,
-                            title: 'Masters',
-                            icon: Icons.inventory_2_outlined,
-                            iconColor: theme.colorScheme.tertiary,
-                            isTablet: isTablet,
-                            children: [
-                              _buildMenuTile(
-                                context: context,
-                                title: 'Companies',
-                                indent: true,
-                                onTap: () {
-                                  Navigator.pop(context);
-                                  Future.microtask(
-                                      () => context.push('/masters/companies'));
-                                },
-                                leftPadding: menuTileLeft,
-                                rightPadding: menuTileRight,
-                                isTablet: isTablet,
-                              ),
-                              _buildMenuTile(
-                                context: context,
-                                title: 'Products',
-                                indent: true,
-                                onTap: () {
-                                  Navigator.pop(context);
-                                  Future.microtask(
-                                      () => context.push('/masters/products'));
-                                },
-                                leftPadding: menuTileLeft,
-                                rightPadding: menuTileRight,
-                                isTablet: isTablet,
-                              ),
-                              _buildMenuTile(
-                                context: context,
-                                title: 'Parties',
-                                indent: true,
-                                onTap: () {
-                                  Navigator.pop(context);
-                                  Future.microtask(
-                                      () => context.push('/masters/parties'));
-                                },
-                                leftPadding: menuTileLeft,
-                                rightPadding: menuTileRight,
-                                isTablet: isTablet,
-                              ),
-                            ],
-                          ),
+                          if (isAdmin ||
+                              hasAccess('masters_products') ||
+                              hasAccess('masters_parties'))
+                            _buildExpansionTile(
+                              context: context,
+                              title: 'Masters',
+                              icon: Icons.inventory_2_outlined,
+                              iconColor: theme.colorScheme.tertiary,
+                              isTablet: isTablet,
+                              children: [
+                                if (isAdmin)
+                                  _buildMenuTile(
+                                    context: context,
+                                    title: 'Companies',
+                                    indent: true,
+                                    onTap: () {
+                                      Navigator.pop(context);
+                                      Future.microtask(() =>
+                                          context.push('/masters/companies'));
+                                    },
+                                    leftPadding: menuTileLeft,
+                                    rightPadding: menuTileRight,
+                                    isTablet: isTablet,
+                                  ),
+                                if (hasAccess('masters_products'))
+                                  _buildMenuTile(
+                                    context: context,
+                                    title: 'Products',
+                                    indent: true,
+                                    onTap: () {
+                                      Navigator.pop(context);
+                                      Future.microtask(() =>
+                                          context.push('/masters/products'));
+                                    },
+                                    leftPadding: menuTileLeft,
+                                    rightPadding: menuTileRight,
+                                    isTablet: isTablet,
+                                  ),
+                                if (hasAccess('masters_parties'))
+                                  _buildMenuTile(
+                                    context: context,
+                                    title: 'Parties',
+                                    indent: true,
+                                    onTap: () {
+                                      Navigator.pop(context);
+                                      Future.microtask(() =>
+                                          context.push('/masters/parties'));
+                                    },
+                                    leftPadding: menuTileLeft,
+                                    rightPadding: menuTileRight,
+                                    isTablet: isTablet,
+                                  ),
+                              ],
+                            ),
 
                           // Reports Section
-                          _buildExpansionTile(
-                            context: context,
-                            title: 'Reports',
-                            icon: Icons.analytics_outlined,
-                            iconColor: theme.colorScheme.primary,
-                            isTablet: isTablet,
-                            children: [
-                              // // Inventory Reports
-                              // _buildMenuTile(
-                              //   context: context,
-                              //   title: 'Inventory Reports',
-                              //   indent: false,
-                              //   onTap: () {}, // Header - no action
-                              //   leftPadding: menuTileLeft,
-                              //   rightPadding: menuTileRight,
-                              //   isTablet: isTablet,
-                              //   isHeader: true,
-                              // ),
-                              _buildMenuTile(
-                                context: context,
-                                title: '  Stock Report',
-                                indent: true,
-                                onTap: () {
-                                  Navigator.pop(context);
-                                  Future.microtask(
-                                      () => context.push('/reports/stock'));
-                                },
-                                leftPadding: menuTileLeft,
-                                rightPadding: menuTileRight,
-                                isTablet: isTablet,
-                              ),
-                              // _buildMenuTile(
-                              //   context: context,
-                              //   title: '  Profit & Costing',
-                              //   indent: true,
-                              //   onTap: () {
-                              //     Navigator.pop(context);
-                              //     Future.microtask(
-                              //         () => context.push('/reports/profit'));
-                              //   },
-                              //   leftPadding: menuTileLeft,
-                              //   rightPadding: menuTileRight,
-                              //   isTablet: isTablet,
-                              // ),
+                          if (hasAccess('reports'))
+                            _buildExpansionTile(
+                              context: context,
+                              title: 'Reports',
+                              icon: Icons.analytics_outlined,
+                              iconColor: theme.colorScheme.primary,
+                              isTablet: isTablet,
+                              children: [
+                                // // Inventory Reports
+                                // _buildMenuTile(
+                                //   context: context,
+                                //   title: 'Inventory Reports',
+                                //   indent: false,
+                                //   onTap: () {}, // Header - no action
+                                //   leftPadding: menuTileLeft,
+                                //   rightPadding: menuTileRight,
+                                //   isTablet: isTablet,
+                                //   isHeader: true,
+                                // ),
+                                _buildMenuTile(
+                                  context: context,
+                                  title: '  Stock Report',
+                                  indent: true,
+                                  onTap: () {
+                                    Navigator.pop(context);
+                                    Future.microtask(
+                                        () => context.push('/reports/stock'));
+                                  },
+                                  leftPadding: menuTileLeft,
+                                  rightPadding: menuTileRight,
+                                  isTablet: isTablet,
+                                ),
+                                // _buildMenuTile(
+                                //   context: context,
+                                //   title: '  Profit & Costing',
+                                //   indent: true,
+                                //   onTap: () {
+                                //     Navigator.pop(context);
+                                //     Future.microtask(
+                                //         () => context.push('/reports/profit'));
+                                //   },
+                                //   leftPadding: menuTileLeft,
+                                //   rightPadding: menuTileRight,
+                                //   isTablet: isTablet,
+                                // ),
 
-                              SizedBox(height: isTablet ? 12 : 8),
+                                SizedBox(height: isTablet ? 12 : 8),
 
-                              // // Transaction Reports
-                              // _buildMenuTile(
-                              //   context: context,
-                              //   title: 'Transaction Reports',
-                              //   indent: false,
-                              //   onTap: () {}, // Header - no action
-                              //   leftPadding: menuTileLeft,
-                              //   rightPadding: menuTileRight,
-                              //   isTablet: isTablet,
-                              //   isHeader: true,
-                              // ),
-                              _buildMenuTile(
-                                context: context,
-                                title: '  Sales Report',
-                                indent: true,
-                                onTap: () {
-                                  Navigator.pop(context);
-                                  Future.microtask(
-                                      () => context.push('/sales/report'));
-                                },
-                                leftPadding: menuTileLeft,
-                                rightPadding: menuTileRight,
-                                isTablet: isTablet,
-                              ),
-                              _buildMenuTile(
-                                context: context,
-                                title: '  Purchase Report',
-                                indent: true,
-                                onTap: () {
-                                  Navigator.pop(context);
-                                  Future.microtask(
-                                      () => context.push('/reports/purchases'));
-                                },
-                                leftPadding: menuTileLeft,
-                                rightPadding: menuTileRight,
-                                isTablet: isTablet,
-                              ),
-                              _buildMenuTile(
-                                context: context,
-                                title: '  Daybook',
-                                indent: true,
-                                onTap: () {
-                                  Navigator.pop(context);
-                                  Future.microtask(
-                                      () => context.push('/reports/daybook'));
-                                },
-                                leftPadding: menuTileLeft,
-                                rightPadding: menuTileRight,
-                                isTablet: isTablet,
-                              ),
-                              // _buildMenuTile(
-                              //   context: context,
-                              //   title: '  All Transactions',
-                              //   indent: true,
-                              //   onTap: () {
-                              //     Navigator.pop(context);
-                              //     Future.microtask(
-                              //         () => context.push('/reports/transactions/all'));
-                              //   },
-                              //   leftPadding: menuTileLeft,
-                              //   rightPadding: menuTileRight,
-                              //   isTablet: isTablet,
-                              // ),
+                                // // Transaction Reports
+                                // _buildMenuTile(
+                                //   context: context,
+                                //   title: 'Transaction Reports',
+                                //   indent: false,
+                                //   onTap: () {}, // Header - no action
+                                //   leftPadding: menuTileLeft,
+                                //   rightPadding: menuTileRight,
+                                //   isTablet: isTablet,
+                                //   isHeader: true,
+                                // ),
+                                _buildMenuTile(
+                                  context: context,
+                                  title: '  Sales Report',
+                                  indent: true,
+                                  onTap: () {
+                                    Navigator.pop(context);
+                                    Future.microtask(
+                                        () => context.push('/sales/report'));
+                                  },
+                                  leftPadding: menuTileLeft,
+                                  rightPadding: menuTileRight,
+                                  isTablet: isTablet,
+                                ),
+                                _buildMenuTile(
+                                  context: context,
+                                  title: '  Purchase Report',
+                                  indent: true,
+                                  onTap: () {
+                                    Navigator.pop(context);
+                                    Future.microtask(() =>
+                                        context.push('/reports/purchases'));
+                                  },
+                                  leftPadding: menuTileLeft,
+                                  rightPadding: menuTileRight,
+                                  isTablet: isTablet,
+                                ),
+                                _buildMenuTile(
+                                  context: context,
+                                  title: '  Daybook',
+                                  indent: true,
+                                  onTap: () {
+                                    Navigator.pop(context);
+                                    Future.microtask(
+                                        () => context.push('/reports/daybook'));
+                                  },
+                                  leftPadding: menuTileLeft,
+                                  rightPadding: menuTileRight,
+                                  isTablet: isTablet,
+                                ),
+                                // _buildMenuTile(
+                                //   context: context,
+                                //   title: '  All Transactions',
+                                //   indent: true,
+                                //   onTap: () {
+                                //     Navigator.pop(context);
+                                //     Future.microtask(
+                                //         () => context.push('/reports/transactions/all'));
+                                //   },
+                                //   leftPadding: menuTileLeft,
+                                //   rightPadding: menuTileRight,
+                                //   isTablet: isTablet,
+                                // ),
 
-                              SizedBox(height: isTablet ? 12 : 8),
+                                SizedBox(height: isTablet ? 12 : 8),
 
-                              // // Financial Reports
-                              // _buildMenuTile(
-                              //   context: context,
-                              //   title: 'Financial Reports',
-                              //   indent: false,
-                              //   onTap: () {}, // Header - no action
-                              //   leftPadding: menuTileLeft,
-                              //   rightPadding: menuTileRight,
-                              //   isTablet: isTablet,
-                              //   isHeader: true,
-                              // ),
-                              _buildMenuTile(
-                                context: context,
-                                title: '  Profit & Loss',
-                                indent: true,
-                                onTap: () {
-                                  Navigator.pop(context);
-                                  Future.microtask(
-                                      () => context.push('/profit/loss'));
-                                },
-                                leftPadding: menuTileLeft,
-                                rightPadding: menuTileRight,
-                                isTablet: isTablet,
-                              ),
-                              _buildMenuTile(
-                                context: context,
-                                title: '  Cash Flow',
-                                indent: true,
-                                onTap: () {
-                                  Navigator.pop(context);
-                                  Future.microtask(
-                                      () => context.push('/reports/cashflow'));
-                                },
-                                leftPadding: menuTileLeft,
-                                rightPadding: menuTileRight,
-                                isTablet: isTablet,
-                              ),
-                              _buildMenuTile(
-                                context: context,
-                                title: '  Balance Sheet',
-                                indent: true,
-                                onTap: () {
-                                  Navigator.pop(context);
-                                  Future.microtask(() =>
-                                      context.push('/reports/balance-sheet'));
-                                },
-                                leftPadding: menuTileLeft,
-                                rightPadding: menuTileRight,
-                                isTablet: isTablet,
-                              ),
-                              // _buildMenuTile(
-                              //   context: context,
-                              //   title: '  Trial Balance',
-                              //   indent: true,
-                              //   onTap: () {
-                              //     Navigator.pop(context);
-                              //     Future.microtask(
-                              //         () => context.push('/reports/trial-balance'));
-                              //   },
-                              //   leftPadding: menuTileLeft,
-                              //   rightPadding: menuTileRight,
-                              //   isTablet: isTablet,
-                              // ),
+                                // // Financial Reports
+                                // _buildMenuTile(
+                                //   context: context,
+                                //   title: 'Financial Reports',
+                                //   indent: false,
+                                //   onTap: () {}, // Header - no action
+                                //   leftPadding: menuTileLeft,
+                                //   rightPadding: menuTileRight,
+                                //   isTablet: isTablet,
+                                //   isHeader: true,
+                                // ),
+                                _buildMenuTile(
+                                  context: context,
+                                  title: '  Profit & Loss',
+                                  indent: true,
+                                  onTap: () {
+                                    Navigator.pop(context);
+                                    Future.microtask(
+                                        () => context.push('/profit/loss'));
+                                  },
+                                  leftPadding: menuTileLeft,
+                                  rightPadding: menuTileRight,
+                                  isTablet: isTablet,
+                                ),
+                                _buildMenuTile(
+                                  context: context,
+                                  title: '  Cash Flow',
+                                  indent: true,
+                                  onTap: () {
+                                    Navigator.pop(context);
+                                    Future.microtask(() =>
+                                        context.push('/reports/cashflow'));
+                                  },
+                                  leftPadding: menuTileLeft,
+                                  rightPadding: menuTileRight,
+                                  isTablet: isTablet,
+                                ),
+                                _buildMenuTile(
+                                  context: context,
+                                  title: '  Balance Sheet',
+                                  indent: true,
+                                  onTap: () {
+                                    Navigator.pop(context);
+                                    Future.microtask(() =>
+                                        context.push('/reports/balance-sheet'));
+                                  },
+                                  leftPadding: menuTileLeft,
+                                  rightPadding: menuTileRight,
+                                  isTablet: isTablet,
+                                ),
+                                // _buildMenuTile(
+                                //   context: context,
+                                //   title: '  Trial Balance',
+                                //   indent: true,
+                                //   onTap: () {
+                                //     Navigator.pop(context);
+                                //     Future.microtask(
+                                //         () => context.push('/reports/trial-balance'));
+                                //   },
+                                //   leftPadding: menuTileLeft,
+                                //   rightPadding: menuTileRight,
+                                //   isTablet: isTablet,
+                                // ),
 
-                              // // Party Reports
-                              // _buildMenuTile(
-                              //   context: context,
-                              //   title: 'Party Reports',
-                              //   indent: false,
-                              //   onTap: () {}, // Header - no action
-                              //   leftPadding: menuTileLeft,
-                              //   rightPadding: menuTileRight,
-                              //   isTablet: isTablet,
-                              //   isHeader: true,
-                              // ),
-                              // _buildMenuTile(
-                              //   context: context,
-                              //   title: '  Party Statement',
-                              //   indent: true,
-                              //   onTap: () {
-                              //     Navigator.pop(context);
-                              //     Future.microtask(
-                              //         () => context.push('/parties/stateentry'));
-                              //   },
-                              //   leftPadding: menuTileLeft,
-                              //   rightPadding: menuTileRight,
-                              //   isTablet: isTablet,
-                              // ),
-                              // _buildMenuTile(
-                              //   context: context,
-                              //   title: '  Party Wise Account',
-                              //   indent: true,
-                              //   onTap: () {
-                              //     Navigator.pop(context);
-                              //     Future.microtask(() =>
-                              //         context.push('/reports/party/wise-account'));
-                              //   },
-                              //   leftPadding: menuTileLeft,
-                              //   rightPadding: menuTileRight,
-                              //   isTablet: isTablet,
-                              // ),
-                            ],
-                          ),
+                                // // Party Reports
+                                // _buildMenuTile(
+                                //   context: context,
+                                //   title: 'Party Reports',
+                                //   indent: false,
+                                //   onTap: () {}, // Header - no action
+                                //   leftPadding: menuTileLeft,
+                                //   rightPadding: menuTileRight,
+                                //   isTablet: isTablet,
+                                //   isHeader: true,
+                                // ),
+                                // _buildMenuTile(
+                                //   context: context,
+                                //   title: '  Party Statement',
+                                //   indent: true,
+                                //   onTap: () {
+                                //     Navigator.pop(context);
+                                //     Future.microtask(
+                                //         () => context.push('/parties/stateentry'));
+                                //   },
+                                //   leftPadding: menuTileLeft,
+                                //   rightPadding: menuTileRight,
+                                //   isTablet: isTablet,
+                                // ),
+                                // _buildMenuTile(
+                                //   context: context,
+                                //   title: '  Party Wise Account',
+                                //   indent: true,
+                                //   onTap: () {
+                                //     Navigator.pop(context);
+                                //     Future.microtask(() =>
+                                //         context.push('/reports/party/wise-account'));
+                                //   },
+                                //   leftPadding: menuTileLeft,
+                                //   rightPadding: menuTileRight,
+                                //   isTablet: isTablet,
+                                // ),
+                              ],
+                            ),
 
                           _modernDivider(isTablet: isTablet),
 
                           // Others Section
-                          _buildExpansionTile(
-                            context: context,
-                            title: 'Others',
-                            icon: Icons.more_horiz_outlined,
-                            iconColor: theme.colorScheme.secondary,
-                            isTablet: isTablet,
-                            children: [
-                              _buildMenuTile(
-                                context: context,
-                                title: 'Manage Companies',
-                                indent: true,
-                                onTap: () {
-                                  Navigator.pop(context);
-                                  Future.microtask(
-                                      () => context.go('/company'));
-                                },
-                                leftPadding: menuTileLeft,
-                                rightPadding: menuTileRight,
-                                isTablet: isTablet,
-                              ),
-                              _buildMenuTile(
-                                context: context,
-                                title: 'Settings',
-                                indent: true,
-                                onTap: () {
-                                  Navigator.pop(context);
-                                  Future.microtask(
-                                      () => context.push('/settings'));
-                                },
-                                leftPadding: menuTileLeft,
-                                rightPadding: menuTileRight,
-                                isTablet: isTablet,
-                              ),
-                              // _buildMenuTile(
-                              //   context: context,
-                              //   title: 'Plans',
-                              //   indent: true,
-                              //   onTap: () {
-                              //     Navigator.pop(context);
-                              //     Future.microtask(() => context.push('/plans'));
-                              //   },
-                              //   leftPadding: menuTileLeft,
-                              //   rightPadding: menuTileRight,
-                              //   isTablet: isTablet,
-                              // ),
-                            ],
-                          ),
+                          if (isAdmin || hasAccess('settings'))
+                            _buildExpansionTile(
+                              context: context,
+                              title: 'Others',
+                              icon: Icons.more_horiz_outlined,
+                              iconColor: theme.colorScheme.secondary,
+                              isTablet: isTablet,
+                              children: [
+                                if (isAdmin)
+                                  _buildMenuTile(
+                                    context: context,
+                                    title: 'Manage Companies',
+                                    indent: true,
+                                    onTap: () {
+                                      Navigator.pop(context);
+                                      Future.microtask(
+                                          () => context.go('/company'));
+                                    },
+                                    leftPadding: menuTileLeft,
+                                    rightPadding: menuTileRight,
+                                    isTablet: isTablet,
+                                  ),
+                                if (isAdmin)
+                                  _buildMenuTile(
+                                    context: context,
+                                    title: 'User Access Control',
+                                    indent: true,
+                                    onTap: () {
+                                      Navigator.pop(context);
+                                      Future.microtask(() => context
+                                          .push('/settings/user-access'));
+                                    },
+                                    leftPadding: menuTileLeft,
+                                    rightPadding: menuTileRight,
+                                    isTablet: isTablet,
+                                  ),
+                                if (hasAccess('settings'))
+                                  _buildMenuTile(
+                                    context: context,
+                                    title: 'Settings',
+                                    indent: true,
+                                    onTap: () {
+                                      Navigator.pop(context);
+                                      Future.microtask(
+                                          () => context.push('/settings'));
+                                    },
+                                    leftPadding: menuTileLeft,
+                                    rightPadding: menuTileRight,
+                                    isTablet: isTablet,
+                                  ),
+                              ],
+                            ),
 
                           _modernDivider(isTablet: isTablet),
 
                           // Switch Company
-                          _buildTile(
-                            context: context,
-                            icon: Icons.swap_horizontal_circle_outlined,
-                            title: 'Switch Company',
-                            onTap: () async {
-                              Navigator.pop(context);
+                          if (hasAccess('switch_company'))
+                            _buildTile(
+                              context: context,
+                              icon: Icons.swap_horizontal_circle_outlined,
+                              title: 'Switch Company',
+                              onTap: () async {
+                                Navigator.pop(context);
 
-                              // Clear current company selection
-                              ref.read(currentCompanyProvider.notifier).state =
-                                  null;
-                              ref
-                                  .read(selectedCompanyIdProvider.notifier)
-                                  .state = null;
+                                ref
+                                    .read(currentCompanyProvider.notifier)
+                                    .state = null;
+                                ref
+                                    .read(selectedCompanyIdProvider.notifier)
+                                    .state = null;
+                                await ref
+                                    .read(rbacServiceProvider)
+                                    .clearCachedCurrentCompanyRole();
 
-                              // Navigate to company selector
-                              Future.microtask(() => context.go('/company'));
-                            },
-                            color: theme.colorScheme.tertiary,
-                            horizontalPadding: tileHorizontal,
-                            isTablet: isTablet,
-                          ),
+                                Future.microtask(() => context.go('/company'));
+                              },
+                              color: theme.colorScheme.tertiary,
+                              horizontalPadding: tileHorizontal,
+                              isTablet: isTablet,
+                            ),
 
                           // Logout
                           _buildTile(
@@ -1086,7 +1166,12 @@ class NavigationDrawerHelper {
 
                               // Get auth service and clear login state
                               final authService = ref.read(authServiceProvider);
-                              await authService.logout();
+                              await authService.logout(
+                                apiClient: ref.read(apiClientProvider),
+                              );
+                              await ref
+                                  .read(rbacServiceProvider)
+                                  .clearAllCachedRoleState();
 
                               // Clear current user and company
                               ref.read(currentUserProvider.notifier).state =

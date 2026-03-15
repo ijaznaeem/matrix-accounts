@@ -3,9 +3,10 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../core/config/providers.dart';
+import '../../core/providers/rbac_providers.dart';
 import '../../core/providers/sync_providers.dart';
 import '../../data/models/company_model.dart';
-import '../../features/companies/services/company_service.dart';
+import '../../data/models/user_model.dart';
 import '../../features/inventory/logic/product_master_provider.dart';
 import '../../features/parties/logic/party_provider.dart';
 import '../../features/sales/logic/sales_providers.dart';
@@ -24,8 +25,12 @@ class _CompanySelectorScreenState extends ConsumerState<CompanySelectorScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final isar = ref.watch(isarServiceProvider).isar;
-    final service = CompanyService(isar);
+    final currentUser = ref.watch(currentUserProvider);
+    final currentUserIsAdminAsync = ref.watch(currentUserIsAdminProvider);
+    final isAdmin = currentUserIsAdminAsync.maybeWhen(
+      data: (value) => value,
+      orElse: () => false,
+    );
 
     return Scaffold(
       appBar: AppBar(
@@ -33,25 +38,32 @@ class _CompanySelectorScreenState extends ConsumerState<CompanySelectorScreen> {
         title: const Text('Select Company'),
         elevation: 0,
         actions: [
-          IconButton(
-            icon: const Icon(Icons.settings),
-            onPressed: () => context.push('/masters/companies'),
-            tooltip: 'Manage Companies',
-          ),
+          if (isAdmin)
+            IconButton(
+              icon: const Icon(Icons.settings),
+              onPressed: () => context.push('/masters/companies'),
+              tooltip: 'Manage Companies',
+            ),
         ],
       ),
-      floatingActionButton: FloatingActionButton.extended(
-        onPressed: () async {
-          final result = await context.push('/masters/companies/form');
-          if (result == true && mounted) {
-            setState(() {}); // Refresh list
-          }
-        },
-        icon: const Icon(Icons.add),
-        label: const Text('Add Company'),
-      ),
+      floatingActionButton: isAdmin
+          ? FloatingActionButton.extended(
+              onPressed: () async {
+                final result = await context.push('/masters/companies/form');
+                if (result == true && mounted) {
+                  setState(() {});
+                }
+              },
+              icon: const Icon(Icons.add),
+              label: const Text('Add Company'),
+            )
+          : null,
       body: FutureBuilder<List<Company>>(
-        future: service.getActiveCompanies(),
+        future: currentUser == null
+            ? Future.value([])
+            : ref
+                .read(rbacServiceProvider)
+                .getAccessibleCompaniesForUser(currentUser.id),
         builder: (context, snapshot) {
           if (snapshot.connectionState == ConnectionState.waiting) {
             return const Center(child: CircularProgressIndicator());
@@ -73,7 +85,7 @@ class _CompanySelectorScreenState extends ConsumerState<CompanySelectorScreen> {
           final companies = snapshot.data ?? [];
 
           if (companies.isEmpty) {
-            return _buildEmptyState();
+            return _buildEmptyState(isAdmin: isAdmin);
           }
 
           return ListView.builder(
@@ -83,7 +95,12 @@ class _CompanySelectorScreenState extends ConsumerState<CompanySelectorScreen> {
               final company = companies[i];
               return Padding(
                 padding: const EdgeInsets.only(bottom: 12),
-                child: _buildCompanyCard(context, ref, company),
+                child: _buildCompanyCard(
+                  context,
+                  ref,
+                  company,
+                  currentUser,
+                ),
               );
             },
           );
@@ -96,6 +113,7 @@ class _CompanySelectorScreenState extends ConsumerState<CompanySelectorScreen> {
     BuildContext context,
     WidgetRef ref,
     Company company,
+    User? currentUser,
   ) {
     return GestureDetector(
       onTap: _isSwitchingCompany
@@ -118,12 +136,19 @@ class _CompanySelectorScreenState extends ConsumerState<CompanySelectorScreen> {
                   companyName: company.name,
                 );
 
+                if (currentUser != null) {
+                  await ref.read(rbacServiceProvider).cacheCurrentCompanyRole(
+                        userId: currentUser.id,
+                        companyId: company.id,
+                      );
+                }
+
                 // Ensure selected company data is up-to-date before opening dashboard.
                 final syncService = ref.read(syncServiceProvider);
                 final tokenReady = await syncService.ensureServerToken();
                 if (tokenReady) {
                   final syncResult = await syncService.fullSync(company.id);
-                  if (mounted && !syncResult.success) {
+                  if (context.mounted && !syncResult.success) {
                     ScaffoldMessenger.of(context).showSnackBar(
                       SnackBar(
                         content: Text(
@@ -133,7 +158,7 @@ class _CompanySelectorScreenState extends ConsumerState<CompanySelectorScreen> {
                       ),
                     );
                   }
-                } else if (mounted) {
+                } else if (context.mounted) {
                   ScaffoldMessenger.of(context).showSnackBar(
                     const SnackBar(
                       content: Text(
@@ -153,7 +178,7 @@ class _CompanySelectorScreenState extends ConsumerState<CompanySelectorScreen> {
                   context.go('/dashboard');
                 }
               } catch (e) {
-                if (mounted) {
+                if (context.mounted) {
                   ScaffoldMessenger.of(context).showSnackBar(
                     SnackBar(
                       content: Text('Failed to switch company: $e'),
@@ -244,7 +269,7 @@ class _CompanySelectorScreenState extends ConsumerState<CompanySelectorScreen> {
     );
   }
 
-  Widget _buildEmptyState() {
+  Widget _buildEmptyState({required bool isAdmin}) {
     return Center(
       child: Column(
         mainAxisAlignment: MainAxisAlignment.center,
@@ -256,7 +281,7 @@ class _CompanySelectorScreenState extends ConsumerState<CompanySelectorScreen> {
           ),
           const SizedBox(height: 16),
           Text(
-            'No Companies Found',
+            isAdmin ? 'No Companies Found' : 'No Companies Assigned',
             style: TextStyle(
               fontSize: 18,
               fontWeight: FontWeight.w600,
@@ -265,7 +290,9 @@ class _CompanySelectorScreenState extends ConsumerState<CompanySelectorScreen> {
           ),
           const SizedBox(height: 8),
           Text(
-            'Tap + to create your first company',
+            isAdmin
+                ? 'Tap + to create your first company'
+                : 'Ask an admin to assign you a company',
             style: TextStyle(
               fontSize: 14,
               color: Colors.grey.shade500,

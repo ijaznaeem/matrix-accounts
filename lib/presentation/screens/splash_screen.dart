@@ -5,6 +5,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../core/config/providers.dart';
+import '../../core/providers/rbac_providers.dart';
 import '../../core/providers/sync_providers.dart';
 import '../../features/companies/services/company_service.dart';
 
@@ -47,15 +48,18 @@ class _SplashScreenState extends ConsumerState<SplashScreen> {
       if (!mounted) return;
 
       final authService = ref.read(authServiceProvider);
+      final apiClient = ref.read(apiClientProvider);
 
-      // Check if user is logged in
+      // Validate and restore current session from the stored auth token.
       if (authService.isLoggedIn) {
-        // Get persisted user
-        final user = authService.getPersistedUser();
+        final user = await authService.restoreAuthenticatedUser(apiClient);
 
         if (user != null) {
           // Restore user state
           ref.read(currentUserProvider.notifier).state = user;
+          final rbacService = ref.read(rbacServiceProvider);
+          await rbacService.ensureBootstrapAssignmentsForUser(user.id);
+          await rbacService.cacheGlobalAdminState(user.id);
 
           // Check if company has been selected
           if (authService.hasSelectedCompany) {
@@ -72,6 +76,10 @@ class _SplashScreenState extends ConsumerState<SplashScreen> {
                   ref.read(currentCompanyProvider.notifier).state = company;
                   ref.read(selectedCompanyIdProvider.notifier).state =
                       company.id;
+                  await rbacService.cacheCurrentCompanyRole(
+                    userId: user.id,
+                    companyId: company.id,
+                  );
 
                   // Try automatic server login + sync in background.
                   Future(() async {
@@ -87,6 +95,7 @@ class _SplashScreenState extends ConsumerState<SplashScreen> {
                 } else {
                   // Company no longer exists or is inactive, go to company selection
                   await authService.clearSelectedCompany();
+                  await rbacService.clearCachedCurrentCompanyRole();
                   if (mounted && !_isNavigating) {
                     _isNavigating = true;
                     context.go('/company');
@@ -96,6 +105,7 @@ class _SplashScreenState extends ConsumerState<SplashScreen> {
                 print('Error loading company: $e');
                 // Error loading company, go to company selection
                 await authService.clearSelectedCompany();
+                await rbacService.clearCachedCurrentCompanyRole();
                 if (mounted && !_isNavigating) {
                   _isNavigating = true;
                   context.go('/company');
@@ -103,12 +113,14 @@ class _SplashScreenState extends ConsumerState<SplashScreen> {
               }
             } else {
               // Invalid company ID, go to company selection
+              await rbacService.clearCachedCurrentCompanyRole();
               if (mounted && !_isNavigating) {
                 _isNavigating = true;
                 context.go('/company');
               }
             }
           } else {
+            await rbacService.clearCachedCurrentCompanyRole();
             // Try automatic server login + sync in background.
             Future(() async {
               final syncService = ref.read(syncServiceProvider);
@@ -122,8 +134,9 @@ class _SplashScreenState extends ConsumerState<SplashScreen> {
             }
           }
         } else {
-          // Invalid persisted state, go to login
-          await authService.logout();
+          // Token is missing or invalid.
+          await authService.clearAuthSession();
+          await ref.read(rbacServiceProvider).clearAllCachedRoleState();
           if (mounted && !_isNavigating) {
             _isNavigating = true;
             context.go('/login');
@@ -131,6 +144,7 @@ class _SplashScreenState extends ConsumerState<SplashScreen> {
         }
       } else {
         // Not logged in, go to login
+        await ref.read(rbacServiceProvider).clearAllCachedRoleState();
         if (mounted && !_isNavigating) {
           _isNavigating = true;
           context.go('/login');
@@ -141,16 +155,17 @@ class _SplashScreenState extends ConsumerState<SplashScreen> {
       print('Stack trace: $stackTrace');
 
       // Fallback to login on any error
-      if (mounted && !_isNavigating) {
-        try {
-          final authService = ref.read(authServiceProvider);
-          await authService.logout();
-        } catch (_) {
-          // Ignore logout errors
-        }
-        _isNavigating = true;
-        context.go('/login');
+      if (!mounted || _isNavigating) return;
+      final router = GoRouter.of(context);
+      try {
+        final authService = ref.read(authServiceProvider);
+        await authService.clearAuthSession();
+        await ref.read(rbacServiceProvider).clearAllCachedRoleState();
+      } catch (_) {
+        // Ignore logout errors
       }
+      _isNavigating = true;
+      router.go('/login');
     }
   }
 

@@ -5,6 +5,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../../core/config/providers.dart';
+import '../../../core/providers/rbac_providers.dart';
 import '../../../core/widgets/navigation_drawer_helper.dart';
 import '../../../data/models/company_model.dart';
 import '../services/company_service.dart';
@@ -83,141 +84,171 @@ class _CompanyListScreenState extends ConsumerState<CompanyListScreen> {
     final colorScheme = theme.colorScheme;
     final isar = ref.watch(isarServiceProvider).isar;
     final service = CompanyService(isar);
+    final isAdminAsync = ref.watch(currentUserIsAdminProvider);
 
-    return Scaffold(
-      drawer: NavigationDrawerHelper.buildNavigationDrawer(
-        context,
-        ref: ref,
-        selectedItem: 'companies',
-      ),
-      appBar: AppBar(
-        title: const Text('Companies'),
-        elevation: 0,
-        actions: [
-          IconButton(
-            icon: const Icon(Icons.add),
-            onPressed: () => context.push('/masters/companies/form'),
-            tooltip: 'Add Company',
+    return isAdminAsync.when(
+      data: (isAdmin) {
+        if (!isAdmin) {
+          return Scaffold(
+            drawer: NavigationDrawerHelper.buildNavigationDrawer(
+              context,
+              ref: ref,
+              selectedItem: 'companies',
+            ),
+            appBar: AppBar(
+              title: const Text('Companies'),
+              elevation: 0,
+            ),
+            body: const Center(
+              child: Text('Only admin users can manage companies.'),
+            ),
+          );
+        }
+
+        return Scaffold(
+          drawer: NavigationDrawerHelper.buildNavigationDrawer(
+            context,
+            ref: ref,
+            selectedItem: 'companies',
           ),
-        ],
-      ),
-      body: Column(
-        children: [
-          // Search Bar
-          Container(
-            padding: const EdgeInsets.all(16),
-            color: colorScheme.surface,
-            child: TextField(
-              controller: _searchController,
-              decoration: InputDecoration(
-                hintText: 'Search companies...',
-                prefixIcon: const Icon(Icons.search),
-                suffixIcon: _searchQuery.isNotEmpty
-                    ? IconButton(
-                        icon: const Icon(Icons.clear),
-                        onPressed: () {
-                          _searchController.clear();
-                          setState(() => _searchQuery = '');
-                        },
-                      )
-                    : null,
-                border: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(12),
-                ),
-                filled: true,
-                fillColor: colorScheme.surface,
+          appBar: AppBar(
+            title: const Text('Companies'),
+            elevation: 0,
+            actions: [
+              IconButton(
+                icon: const Icon(Icons.add),
+                onPressed: () => context.push('/masters/companies/form'),
+                tooltip: 'Add Company',
               ),
-              onChanged: (value) {
-                setState(() => _searchQuery = value);
-              },
-            ),
+            ],
           ),
-
-          // Company List
-          Expanded(
-            child: FutureBuilder<List<Company>>(
-              future: _searchQuery.isEmpty
-                  ? service.getAllCompanies()
-                  : service.searchCompanies(_searchQuery),
-              builder: (context, snapshot) {
-                if (snapshot.connectionState == ConnectionState.waiting) {
-                  return const Center(child: CircularProgressIndicator());
-                }
-
-                if (snapshot.hasError) {
-                  return Center(
-                    child: Column(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: [
-                        Icon(Icons.error_outline,
-                            size: 64, color: colorScheme.error),
-                        const SizedBox(height: 16),
-                        Text(
-                          'Error loading companies',
-                          style: theme.textTheme.titleMedium,
-                        ),
-                        const SizedBox(height: 8),
-                        Text(
-                          snapshot.error.toString(),
-                          style: theme.textTheme.bodySmall,
-                          textAlign: TextAlign.center,
-                        ),
-                      ],
+          body: Column(
+            children: [
+              // Search Bar
+              Container(
+                padding: const EdgeInsets.all(16),
+                color: colorScheme.surface,
+                child: TextField(
+                  controller: _searchController,
+                  decoration: InputDecoration(
+                    hintText: 'Search companies...',
+                    prefixIcon: const Icon(Icons.search),
+                    suffixIcon: _searchQuery.isNotEmpty
+                        ? IconButton(
+                            icon: const Icon(Icons.clear),
+                            onPressed: () {
+                              _searchController.clear();
+                              setState(() => _searchQuery = '');
+                            },
+                          )
+                        : null,
+                    border: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(12),
                     ),
-                  );
-                }
-
-                final companies = snapshot.data ?? [];
-
-                if (companies.isEmpty) {
-                  return Center(
-                    child: Column(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: [
-                        Icon(
-                          Icons.business,
-                          size: 64,
-                          color: colorScheme.onSurfaceVariant.withAlpha(128),
-                        ),
-                        const SizedBox(height: 16),
-                        Text(
-                          _searchQuery.isEmpty
-                              ? 'No Companies Found'
-                              : 'No matching companies',
-                          style: theme.textTheme.titleMedium?.copyWith(
-                            color: colorScheme.onSurfaceVariant,
-                          ),
-                        ),
-                        const SizedBox(height: 8),
-                        Text(
-                          _searchQuery.isEmpty
-                              ? 'Tap + to create your first company'
-                              : 'Try a different search term',
-                          style: theme.textTheme.bodySmall?.copyWith(
-                            color: colorScheme.onSurfaceVariant,
-                          ),
-                        ),
-                      ],
-                    ),
-                  );
-                }
-
-                return ListView.builder(
-                  padding: const EdgeInsets.all(16),
-                  itemCount: companies.length,
-                  itemBuilder: (context, index) {
-                    final company = companies[index];
-                    return _buildCompanyCard(company, colorScheme);
+                    filled: true,
+                    fillColor: colorScheme.surface,
+                  ),
+                  onChanged: (value) {
+                    setState(() => _searchQuery = value);
                   },
-                );
-              },
-            ),
+                ),
+              ),
+
+              // Company List
+              Expanded(
+                child: FutureBuilder<List<Company>>(
+                  future: _searchQuery.isEmpty
+                      ? service.getAllCompanies()
+                      : service.searchCompanies(_searchQuery),
+                  builder: (context, snapshot) {
+                    if (snapshot.connectionState == ConnectionState.waiting) {
+                      return const Center(child: CircularProgressIndicator());
+                    }
+
+                    if (snapshot.hasError) {
+                      return Center(
+                        child: Column(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            Icon(Icons.error_outline,
+                                size: 64, color: colorScheme.error),
+                            const SizedBox(height: 16),
+                            Text(
+                              'Error loading companies',
+                              style: theme.textTheme.titleMedium,
+                            ),
+                            const SizedBox(height: 8),
+                            Text(
+                              snapshot.error.toString(),
+                              style: theme.textTheme.bodySmall,
+                              textAlign: TextAlign.center,
+                            ),
+                          ],
+                        ),
+                      );
+                    }
+
+                    final companies = snapshot.data ?? [];
+
+                    if (companies.isEmpty) {
+                      return Center(
+                        child: Column(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            Icon(
+                              Icons.business,
+                              size: 64,
+                              color:
+                                  colorScheme.onSurfaceVariant.withAlpha(128),
+                            ),
+                            const SizedBox(height: 16),
+                            Text(
+                              _searchQuery.isEmpty
+                                  ? 'No Companies Found'
+                                  : 'No matching companies',
+                              style: theme.textTheme.titleMedium?.copyWith(
+                                color: colorScheme.onSurfaceVariant,
+                              ),
+                            ),
+                            const SizedBox(height: 8),
+                            Text(
+                              _searchQuery.isEmpty
+                                  ? 'Tap + to create your first company'
+                                  : 'Try a different search term',
+                              style: theme.textTheme.bodySmall?.copyWith(
+                                color: colorScheme.onSurfaceVariant,
+                              ),
+                            ),
+                          ],
+                        ),
+                      );
+                    }
+
+                    return ListView.builder(
+                      padding: const EdgeInsets.all(16),
+                      itemCount: companies.length,
+                      itemBuilder: (context, index) {
+                        final company = companies[index];
+                        return _buildCompanyCard(company, colorScheme);
+                      },
+                    );
+                  },
+                ),
+              ),
+            ],
           ),
-        ],
+          floatingActionButton: FloatingActionButton(
+            onPressed: () => context.push('/masters/companies/form'),
+            child: const Icon(Icons.add),
+          ),
+        );
+      },
+      loading: () => const Scaffold(
+        body: Center(child: CircularProgressIndicator()),
       ),
-      floatingActionButton: FloatingActionButton(
-        onPressed: () => context.push('/masters/companies/form'),
-        child: const Icon(Icons.add),
+      error: (error, _) => Scaffold(
+        appBar: AppBar(title: const Text('Companies')),
+        body: Center(child: Text('Error: $error')),
       ),
     );
   }

@@ -3,12 +3,12 @@ import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:isar/isar.dart';
-import 'package:matrix_accounts/core/database/isar_service.dart';
-import 'package:matrix_accounts/core/services/api_client.dart';
-import 'package:matrix_accounts/core/services/sync_service.dart';
-import 'package:matrix_accounts/data/models/account_models.dart';
-import 'package:matrix_accounts/data/models/sync_change_model.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:veyo_sync/core/database/isar_service.dart';
+import 'package:veyo_sync/core/services/api_client.dart';
+import 'package:veyo_sync/core/services/sync_service.dart';
+import 'package:veyo_sync/data/models/account_models.dart';
+import 'package:veyo_sync/data/models/sync_change_model.dart';
 
 class _FakeApiClient extends ApiClient {
   _FakeApiClient({

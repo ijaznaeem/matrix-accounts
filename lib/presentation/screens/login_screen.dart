@@ -1,8 +1,10 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 import '../../core/config/providers.dart';
+import '../../core/providers/rbac_providers.dart';
 import '../../core/providers/sync_providers.dart';
 import '../../data/models/user_model.dart';
 
@@ -15,11 +17,26 @@ class LoginScreen extends ConsumerStatefulWidget {
 
 class _LoginScreenState extends ConsumerState<LoginScreen> {
   final _formKey = GlobalKey<FormState>();
-  final _emailController = TextEditingController(text: 'admin@veyo.com');
-  final _passwordController = TextEditingController(text: 'password123');
+  final _emailController = TextEditingController();
+  final _passwordController = TextEditingController();
   bool _isPasswordVisible = false;
   bool _isLoading = false;
   bool _isInitialSyncing = false;
+  bool _hasAnyAdmin = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadAdminRegistrationState();
+  }
+
+  Future<void> _loadAdminRegistrationState() async {
+    final prefs = await SharedPreferences.getInstance();
+    if (!mounted) return;
+    setState(() {
+      _hasAnyAdmin = prefs.getBool('rbac_any_admin_exists') ?? false;
+    });
+  }
 
   @override
   void dispose() {
@@ -41,12 +58,14 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
     try {
       final authService = ref.read(authServiceProvider);
       final apiClient = ref.read(apiClientProvider);
+      final deviceId = ref.read(syncServiceProvider).deviceId;
       final email = _emailController.text.trim();
       final password = _passwordController.text;
 
       final response = await apiClient.post('/api/auth/login', {
         'email': email,
         'password': password,
+        'device_id': deviceId,
       });
 
       if (response['success'] != true || response['token'] == null) {
@@ -76,12 +95,6 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
         return;
       }
 
-      await apiClient.prefs.setString('auth_token', response['token']);
-      await authService.saveServerCredentials(
-        email: serverEmail,
-        password: password,
-      );
-
       final user = User()
         ..id = serverUserId
         ..email = serverEmail
@@ -89,7 +102,9 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
         ..passwordHash = ''
         ..isActive = true;
 
-      final saved = await authService.saveLoginState(
+      final saved = await authService.saveAuthenticatedSession(
+        token: response['token'].toString(),
+        refreshToken: response['refresh_token']?.toString(),
         userId: serverUserId,
         email: serverEmail,
         fullName: fullName,
@@ -97,6 +112,10 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
 
       if (saved) {
         ref.read(currentUserProvider.notifier).state = user;
+        final rbacService = ref.read(rbacServiceProvider);
+        await rbacService.ensureBootstrapAssignmentsForUser(user.id);
+        await rbacService.cacheGlobalAdminState(user.id);
+        await rbacService.clearCachedCurrentCompanyRole();
 
         if (mounted) {
           setState(() => _isInitialSyncing = true);
@@ -191,16 +210,21 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                         crossAxisAlignment: CrossAxisAlignment.stretch,
                         children: [
                           // Logo/Icon
-                          Icon(
-                            Icons.account_balance_wallet,
-                            size: 64,
-                            color: colorScheme.primary,
+                          Image.asset(
+                            'assets/icons/app_icon.png',
+                            height: 72,
+                            fit: BoxFit.contain,
+                            errorBuilder: (context, error, stackTrace) => Icon(
+                              Icons.account_balance_wallet,
+                              size: 64,
+                              color: colorScheme.primary,
+                            ),
                           ),
                           const SizedBox(height: 16),
 
                           // Title
                           Text(
-                            'Matrix Accounts',
+                            'VEYO',
                             textAlign: TextAlign.center,
                             style: theme.textTheme.headlineMedium?.copyWith(
                               color: colorScheme.primary,
@@ -210,7 +234,7 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                           const SizedBox(height: 8),
 
                           Text(
-                            'Sign in to continue',
+                            'Sign in to VEYO SYNC',
                             textAlign: TextAlign.center,
                             style: theme.textTheme.bodyMedium?.copyWith(
                               color: colorScheme.onSurfaceVariant,
@@ -322,7 +346,42 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                                     ),
                                   ),
                           ),
-                          const SizedBox(height: 16),
+                          const SizedBox(height: 12),
+                          if (!_hasAnyAdmin) ...[
+                            OutlinedButton.icon(
+                              onPressed: _isLoading
+                                  ? null
+                                  : () => context.push('/register-admin'),
+                              icon: const Icon(
+                                Icons.admin_panel_settings_outlined,
+                              ),
+                              label: const Text('Register Admin'),
+                              style: OutlinedButton.styleFrom(
+                                padding:
+                                    const EdgeInsets.symmetric(vertical: 14),
+                                shape: RoundedRectangleBorder(
+                                  borderRadius: BorderRadius.circular(12),
+                                ),
+                              ),
+                            ),
+                            const SizedBox(height: 16),
+                          ] else ...[
+                            Container(
+                              padding: const EdgeInsets.all(12),
+                              decoration: BoxDecoration(
+                                color: colorScheme.surfaceContainerHighest,
+                                borderRadius: BorderRadius.circular(8),
+                              ),
+                              child: Text(
+                                'Admin is already registered. Please sign in with your assigned account.',
+                                textAlign: TextAlign.center,
+                                style: theme.textTheme.bodySmall?.copyWith(
+                                  color: colorScheme.onSurfaceVariant,
+                                ),
+                              ),
+                            ),
+                            const SizedBox(height: 16),
+                          ],
 
                           // Info hint
                           Container(

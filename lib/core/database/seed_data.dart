@@ -5,7 +5,6 @@ import 'package:isar/isar.dart';
 import '../../data/models/company_model.dart';
 import '../../data/models/inventory_models.dart';
 import '../../data/models/party_model.dart';
-import 'dao/account_dao.dart';
 
 class SeedData {
   final Isar isar;
@@ -41,94 +40,6 @@ class SeedData {
     });
 
     print('✓ Units of measure seeded');
-  }
-
-  Future<void> _seedCustomers() async {
-    final companies = await isar.companys.where().findAll();
-    if (companies.isEmpty) return;
-
-    final company = companies.first;
-
-    await isar.writeTxn(() async {
-      final customers = <Party>[];
-
-      for (final customer in customers) {
-        await isar.partys.put(customer);
-      }
-    });
-
-    print('✓ Customers seeded');
-  }
-
-  Future<void> _seedCategories() async {
-    final companies = await isar.companys.where().findAll();
-    if (companies.isEmpty) return;
-
-    final company = companies.first;
-
-    await isar.writeTxn(() async {
-      final categories = [
-        ItemCategory()
-          ..companyId = company.id
-          ..name = 'Home & Kitchen'
-          ..parentCategoryId = null,
-      ];
-
-      for (final category in categories) {
-        await isar.itemCategorys.put(category);
-      }
-    });
-
-    print('✓ Categories seeded');
-  }
-
-  Future<void> _seedProducts() async {
-    final companies = await isar.companys.where().findAll();
-    if (companies.isEmpty) return;
-
-    final company = companies.first;
-
-    final categories = await isar.itemCategorys
-        .filter()
-        .companyIdEqualTo(company.id)
-        .findAll();
-
-    final units = await isar.unitOfMeasures.where().findAll();
-
-    if (categories.isEmpty || units.isEmpty) return;
-
-    final homeKitchenCategory = categories.firstWhere(
-      (c) => c.name == 'Home & Kitchen',
-      orElse: () => categories.first,
-    );
-
-    final pcsUnit = units.firstWhere(
-      (u) => u.abbrev == 'Pcs',
-      orElse: () => units.first,
-    );
-    final kgUnit = units.firstWhere(
-      (u) => u.abbrev == 'Kg',
-      orElse: () => units.first,
-    );
-
-    await isar.writeTxn(() async {
-      final products = <Product>[];
-
-      for (final product in products) {
-        await isar.products.put(product);
-      }
-    });
-
-    print('✓ Products seeded');
-  }
-
-  Future<void> _seedChartOfAccounts() async {
-    final companies = await isar.companys.where().findAll();
-    for (final company in companies) {
-      final accountDao = AccountDao(isar);
-      await accountDao.createDefaultAccounts(company.id);
-    }
-    print('✓ Chart of accounts seeded');
   }
 
   Future<void> clearAllData() async {

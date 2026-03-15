@@ -221,10 +221,6 @@ class _ExpenseFormScreenState extends ConsumerState<ExpenseFormScreen> {
     super.dispose();
   }
 
-  double get _subTotal => _lines.fold<double>(0, (sum, l) => sum + l.amount);
-
-  double get _totalAmount => _subTotal;
-
   @override
   Widget build(BuildContext context) {
     final company = ref.watch(currentCompanyProvider);
@@ -264,7 +260,6 @@ class _ExpenseFormScreenState extends ConsumerState<ExpenseFormScreen> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  // Expense No. and Date
                   Row(
                     children: [
                       Expanded(
@@ -338,8 +333,6 @@ class _ExpenseFormScreenState extends ConsumerState<ExpenseFormScreen> {
                     ],
                   ),
                   const SizedBox(height: 16),
-
-                  // Expense Category
                   Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
@@ -402,10 +395,7 @@ class _ExpenseFormScreenState extends ConsumerState<ExpenseFormScreen> {
                       ),
                     ],
                   ),
-
                   const SizedBox(height: 24),
-
-                  // Cash Amount
                   Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
@@ -456,7 +446,6 @@ class _ExpenseFormScreenState extends ConsumerState<ExpenseFormScreen> {
                         onChanged: (value) {
                           final amount = double.tryParse(value) ?? 0;
                           setState(() {
-                            // Clear existing lines and add one with the amount
                             _lines.clear();
                             _lines.add(ExpenseLineDraft(
                               description:
@@ -464,8 +453,6 @@ class _ExpenseFormScreenState extends ConsumerState<ExpenseFormScreen> {
                               qty: 1,
                               rate: amount,
                             ));
-
-                            // Update payment amount
                             if (_paymentLines.isNotEmpty) {
                               _paymentLines.first.amount = amount;
                             }
@@ -474,13 +461,8 @@ class _ExpenseFormScreenState extends ConsumerState<ExpenseFormScreen> {
                       ),
                     ],
                   ),
-
                   const SizedBox(height: 24),
-
-                  // Payment Section
                   const SizedBox(height: 24),
-
-                  // Save Buttons
                   Row(
                     children: [
                       Expanded(
@@ -515,160 +497,6 @@ class _ExpenseFormScreenState extends ConsumerState<ExpenseFormScreen> {
             ),
           ),
         ));
-  }
-
-  // Generate PDF Document
-
-  Widget _buildLineItem(int index) {
-    final line = _lines[index];
-
-    return Container(
-      padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 8),
-      decoration: BoxDecoration(
-        border: Border(bottom: BorderSide(color: Colors.grey.shade200)),
-      ),
-      child: Row(
-        children: [
-          Expanded(
-            flex: 4,
-            child: Padding(
-              padding: const EdgeInsets.only(left: 8),
-              child: TextField(
-                controller: TextEditingController(
-                  text: line.description ?? '',
-                ),
-                decoration: const InputDecoration(
-                  hintText: 'Item description',
-                  border: InputBorder.none,
-                  isDense: true,
-                  contentPadding: EdgeInsets.zero,
-                ),
-                style: const TextStyle(fontSize: 13),
-                onChanged: (value) {
-                  line.description = value;
-                },
-              ),
-            ),
-          ),
-          SizedBox(
-            width: 80,
-            child: TextFormField(
-              initialValue: line.qty != 1 ? line.qty.toStringAsFixed(2) : '',
-              keyboardType:
-                  const TextInputType.numberWithOptions(decimal: true),
-              textInputAction: TextInputAction.next,
-              textAlign: TextAlign.center,
-              decoration: InputDecoration(
-                labelText: 'Qty',
-                hintText: '0',
-                border: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(8),
-                  borderSide: BorderSide(color: Colors.grey.shade300),
-                ),
-                enabledBorder: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(8),
-                  borderSide: BorderSide(color: Colors.grey.shade300),
-                ),
-                focusedBorder: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(8),
-                  borderSide:
-                      BorderSide(color: Colors.deepOrange.shade700, width: 2),
-                ),
-                isDense: true,
-                filled: true,
-                fillColor: Colors.grey.shade50,
-                contentPadding: const EdgeInsets.symmetric(
-                  horizontal: 8,
-                  vertical: 10,
-                ),
-              ),
-              style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w500),
-              onChanged: (value) {
-                if (value.isNotEmpty) {
-                  final qty = double.tryParse(value);
-                  if (qty != null && qty != line.qty) {
-                    setState(() {
-                      line.qty = qty;
-                    });
-                  }
-                }
-              },
-            ),
-          ),
-          const SizedBox(width: 8),
-          SizedBox(
-            width: 80,
-            child: TextFormField(
-              initialValue: line.rate > 0 ? line.rate.toStringAsFixed(2) : '',
-              keyboardType:
-                  const TextInputType.numberWithOptions(decimal: true),
-              textInputAction: TextInputAction.next,
-              textAlign: TextAlign.center,
-              decoration: InputDecoration(
-                labelText: 'Rate',
-                hintText: '0',
-                border: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(8),
-                  borderSide: BorderSide(color: Colors.grey.shade300),
-                ),
-                enabledBorder: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(8),
-                  borderSide: BorderSide(color: Colors.grey.shade300),
-                ),
-                focusedBorder: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(8),
-                  borderSide:
-                      BorderSide(color: Colors.deepOrange.shade700, width: 2),
-                ),
-                isDense: true,
-                filled: true,
-                fillColor: Colors.grey.shade50,
-                contentPadding: const EdgeInsets.symmetric(
-                  horizontal: 8,
-                  vertical: 10,
-                ),
-              ),
-              style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w500),
-              onChanged: (value) {
-                if (value.isNotEmpty) {
-                  final rate = double.tryParse(value);
-                  if (rate != null && rate != line.rate) {
-                    setState(() {
-                      line.rate = rate;
-                    });
-                  }
-                }
-              },
-            ),
-          ),
-          Expanded(
-            flex: 1,
-            child: Padding(
-              padding: const EdgeInsets.only(right: 8),
-              child: Text(
-                line.amount.toStringAsFixed(2),
-                style:
-                    const TextStyle(fontWeight: FontWeight.w500, fontSize: 12),
-                textAlign: TextAlign.right,
-              ),
-            ),
-          ),
-          SizedBox(
-            width: 40,
-            child: IconButton(
-              icon: const Icon(Icons.delete, size: 18, color: Colors.red),
-              onPressed: () {
-                if (_lines.length > 1) {
-                  setState(() => _lines.removeAt(index));
-                }
-              },
-              padding: EdgeInsets.zero,
-              constraints: const BoxConstraints(),
-            ),
-          ),
-        ],
-      ),
-    );
   }
 
   Future<void> _saveExpense(Company? company, User? user,

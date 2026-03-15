@@ -10,6 +10,75 @@ class AccountDao {
 
   AccountDao(this.isar);
 
+  Future<void> _ensureCoreSystemAccountsInternal(int companyId) async {
+    final requiredAccounts = <String,
+        ({
+      String name,
+      AccountType accountType,
+      String? description,
+    })>{
+      '1000': (name: 'Cash', accountType: AccountType.asset, description: null),
+      '1050': (
+        name: 'Cheque',
+        accountType: AccountType.asset,
+        description: null,
+      ),
+      '1100': (name: 'Bank', accountType: AccountType.asset, description: null),
+      '1200': (
+        name: 'Accounts Receivable',
+        accountType: AccountType.asset,
+        description: 'Money owed by customers',
+      ),
+      '1300': (
+        name: 'Inventory',
+        accountType: AccountType.asset,
+        description: null,
+      ),
+      '2000': (
+        name: 'Accounts Payable',
+        accountType: AccountType.liability,
+        description: 'Money owed to suppliers',
+      ),
+      '3000': (
+        name: 'Owner Equity',
+        accountType: AccountType.equity,
+        description: null,
+      ),
+      '4000': (
+        name: 'Sales Revenue',
+        accountType: AccountType.revenue,
+        description: null,
+      ),
+      '5000': (
+        name: 'Cost of Goods Sold',
+        accountType: AccountType.expense,
+        description: 'Direct cost of goods sold',
+      ),
+    };
+
+    for (final entry in requiredAccounts.entries) {
+      final existing = await isar.accounts
+          .filter()
+          .companyIdEqualTo(companyId)
+          .codeEqualTo(entry.key)
+          .findFirst();
+
+      if (existing != null) continue;
+
+      final account = Account()
+        ..companyId = companyId
+        ..name = entry.value.name
+        ..code = entry.key
+        ..accountType = entry.value.accountType
+        ..description = entry.value.description
+        ..isSystem = true
+        ..openingBalance = 0
+        ..currentBalance = 0;
+
+      await isar.accounts.put(account);
+    }
+  }
+
   // Initialize default chart of accounts for a company
   Future<void> createDefaultAccounts(int companyId) async {
     await isar.writeTxn(() async {
@@ -239,6 +308,8 @@ class AccountDao {
     required String invoiceNo,
     required double totalAmount,
   }) async {
+    await _ensureCoreSystemAccountsInternal(companyId);
+
     // Get required accounts
     final accountsReceivable = await isar.accounts
         .filter()
@@ -311,6 +382,8 @@ class AccountDao {
     required double amount,
     required String accountCode, // '1000' cash, '1050' cheque, '1100' bank
   }) async {
+    await _ensureCoreSystemAccountsInternal(companyId);
+
     // Get the cash/bank account by code
     final cashBankAccount = await isar.accounts
         .filter()
@@ -405,6 +478,8 @@ class AccountDao {
     required double amount,
     required String accountCode, // '1000' for cash, '1100' for bank
   }) async {
+    await _ensureCoreSystemAccountsInternal(companyId);
+
     // Get the cash/bank account by code
     final cashBankAccount = await isar.accounts
         .filter()
@@ -833,6 +908,8 @@ class AccountDao {
     required String invoiceNo,
     required double totalAmount,
   }) async {
+    await _ensureCoreSystemAccountsInternal(companyId);
+
     // Get required accounts
     final accountsPayable = await isar.accounts
         .filter()
@@ -905,6 +982,8 @@ class AccountDao {
     required double amount,
     required String accountCode, // '1000' cash, '1050' cheque, '1100' bank
   }) async {
+    await _ensureCoreSystemAccountsInternal(companyId);
+
     // Get the cash/bank account by code
     final cashBankAccount = await isar.accounts
         .filter()
@@ -1032,6 +1111,8 @@ class AccountDao {
     required double amount,
     required String accountCode, // '1000' cash, '1050' cheque, '1100' bank
   }) async {
+    await _ensureCoreSystemAccountsInternal(companyId);
+
     // Get the cash/bank account by code
     final cashBankAccount = await isar.accounts
         .filter()

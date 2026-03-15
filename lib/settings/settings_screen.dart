@@ -3,18 +3,11 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
-import 'package:matrix_accounts/features/settings/presentation/company_settings_screen.dart'
-    show CompanySettingsScreen;
-import 'package:matrix_accounts/presentation/screens/login_screen.dart';
-import 'package:matrix_accounts/settings/financial_year_settings_screen.dart';
-import 'package:matrix_accounts/settings/lock_screen.dart';
-import 'package:matrix_accounts/settings/share_user_screen.dart';
-import 'package:matrix_accounts/settings/tax_settings_screen.dart';
-import 'package:matrix_accounts/settings/theme_settings_screen.dart';
 import 'package:shared_preferences/shared_preferences.dart';
-
-import '../../core/config/providers.dart';
-import '../../core/mixins/app_lifecycle_mixin.dart';
+import 'package:veyo_sync/features/settings/presentation/company_settings_screen.dart'
+    show CompanySettingsScreen;
+import 'package:veyo_sync/settings/share_user_screen.dart';
+import 'package:veyo_sync/settings/theme_settings_screen.dart';
 
 class SettingsScreen extends ConsumerStatefulWidget {
   const SettingsScreen({super.key});
@@ -24,13 +17,8 @@ class SettingsScreen extends ConsumerStatefulWidget {
 }
 
 class _SettingsScreenState extends ConsumerState<SettingsScreen> {
-  bool _isDarkMode = false;
   bool _enableNotifications = true;
-  bool _autoBackup = true;
-  String _currency = 'INR';
-  String _dateFormat = 'DD/MM/YYYY';
   String _language = 'English';
-  int _autoLockDuration = 5; // Auto-lock after 5 minutes
 
   @override
   void initState() {
@@ -40,16 +28,10 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
 
   Future<void> _loadSettings() async {
     final prefs = await SharedPreferences.getInstance();
-    final biometricService = ref.read(biometricServiceProvider);
 
     setState(() {
-      _isDarkMode = prefs.getBool('isDarkMode') ?? false;
       _enableNotifications = prefs.getBool('enableNotifications') ?? true;
-      _autoBackup = prefs.getBool('autoBackup') ?? true;
-      _currency = prefs.getString('currency') ?? 'INR';
-      _dateFormat = prefs.getString('dateFormat') ?? 'DD/MM/YYYY';
       _language = prefs.getString('language') ?? 'English';
-      _autoLockDuration = biometricService.autoLockDuration;
     });
   }
 
@@ -60,66 +42,6 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     } else if (value is String) {
       await prefs.setString(key, value);
     }
-  }
-
-  void _showCurrencyDialog() {
-    showDialog(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Select Currency'),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            'PKR - Pakistani Rupee',
-            'USD - US Dollar',
-          ].map((currency) {
-            final currencyCode = currency.split(' - ')[0];
-            return RadioListTile<String>(
-              title: Text(currency),
-              value: currencyCode,
-              groupValue: _currency,
-              onChanged: (value) {
-                setState(() {
-                  _currency = value!;
-                });
-                _saveSetting('currency', value!);
-                Navigator.of(context).pop();
-              },
-            );
-          }).toList(),
-        ),
-      ),
-    );
-  }
-
-  void _showDateFormatDialog() {
-    showDialog(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Select Date Format'),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            'DD/MM/YYYY',
-            'MM/DD/YYYY',
-            'YYYY-MM-DD',
-          ].map((format) {
-            return RadioListTile<String>(
-              title: Text(format),
-              value: format,
-              groupValue: _dateFormat,
-              onChanged: (value) {
-                setState(() {
-                  _dateFormat = value!;
-                });
-                _saveSetting('dateFormat', value!);
-                Navigator.of(context).pop();
-              },
-            );
-          }).toList(),
-        ),
-      ),
-    );
   }
 
   void _showLanguageDialog() {
@@ -151,131 +73,6 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
               },
             );
           }).toList(),
-        ),
-      ),
-    );
-  }
-
-  Future<void> _enableBiometricAuth() async {
-    try {
-      final biometricService = ref.read(biometricServiceProvider);
-      final success = await biometricService.setBiometricEnabled(true);
-
-      if (success) {
-        setState(() {
-          // Refresh the UI
-        });
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Biometric authentication enabled successfully'),
-            backgroundColor: Colors.green,
-          ),
-        );
-      } else {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Failed to enable biometric authentication'),
-            backgroundColor: Colors.red,
-          ),
-        );
-      }
-    } catch (e) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('Error: $e'),
-          backgroundColor: Colors.red,
-        ),
-      );
-    }
-  }
-
-  Future<void> _disableBiometricAuth() async {
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Disable Biometric Authentication'),
-        content: const Text(
-          'Are you sure you want to disable biometric authentication? '
-          'This will also disable auto-lock functionality.',
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(context).pop(false),
-            child: const Text('Cancel'),
-          ),
-          ElevatedButton(
-            onPressed: () => Navigator.of(context).pop(true),
-            style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
-            child: const Text('Disable'),
-          ),
-        ],
-      ),
-    );
-
-    if (confirmed == true) {
-      final biometricService = ref.read(biometricServiceProvider);
-      final success = await biometricService.setBiometricEnabled(false);
-
-      if (success) {
-        setState(() {
-          // Refresh the UI
-        });
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Biometric authentication disabled'),
-            backgroundColor: Colors.orange,
-          ),
-        );
-      }
-    }
-  }
-
-  String _getAutoLockText(int minutes) {
-    if (minutes <= 0) return 'Disabled';
-    if (minutes == 1) return 'After 1 minute';
-    return 'After $minutes minutes';
-  }
-
-  void _showAutoLockDialog() {
-    showDialog(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Auto-Lock Duration'),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            const Text(
-                'Select when to automatically lock the app after going to background:'),
-            const SizedBox(height: 16),
-            ...[-1, 0, 1, 2, 5, 10, 15, 30].map((minutes) {
-              String text;
-              if (minutes == -1) {
-                text = 'Immediately';
-              } else if (minutes == 0) {
-                text = 'Never';
-              } else if (minutes == 1) {
-                text = 'After 1 minute';
-              } else {
-                text = 'After $minutes minutes';
-              }
-
-              return RadioListTile<int>(
-                title: Text(text),
-                value: minutes,
-                groupValue: _autoLockDuration,
-                onChanged: (value) async {
-                  if (value != null) {
-                    final biometricService = ref.read(biometricServiceProvider);
-                    await biometricService.setAutoLockDuration(value);
-                    setState(() {
-                      _autoLockDuration = value;
-                    });
-                    Navigator.of(context).pop();
-                  }
-                },
-              );
-            }).toList(),
-          ],
         ),
       ),
     );

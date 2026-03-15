@@ -40,7 +40,7 @@ class SalesDao {
         .findAll();
   }
 
-  Future<void> createSaleInvoice({
+  Future<int> createSaleInvoice({
     required int companyId,
     required Party customer,
     required DateTime date,
@@ -58,6 +58,7 @@ class SalesDao {
       ..totalAmount = lines.fold(0.0, (sum, l) => sum + (l.qty * l.rate))
       ..createdByUserId = userId;
 
+    int createdInvoiceId = 0;
     await isar.writeTxn(() async {
       final txnId = await isar.transactions.put(transaction);
 
@@ -105,9 +106,10 @@ class SalesDao {
             totalPayment; // Closing balance
 
       final invoiceId = await isar.invoices.put(invoice);
+      createdInvoiceId = invoiceId;
 
       // Record sync change for created invoice
-      final _createData = jsonEncode({
+      final createData = jsonEncode({
         'id': invoiceId,
         'company_id': companyId,
         'transaction_id': txnId,
@@ -120,15 +122,15 @@ class SalesDao {
         'paid_amount': invoice.paidAmount,
         'remaining_balance': invoice.remainingBalance,
       });
-      final _createChange = SyncChange()
+      final createChange = SyncChange()
         ..companyId = companyId
         ..table = 'invoices'
         ..operation = ChangeOperation.create
         ..recordId = invoiceId
-        ..data = _createData
+        ..data = createData
         ..createdAt = DateTime.now()
         ..synced = false;
-      await isar.syncChanges.put(_createChange);
+      await isar.syncChanges.put(createChange);
 
       for (final l in lines) {
         final line = TransactionLine()
@@ -267,6 +269,7 @@ class SalesDao {
         }
       }
     });
+    return createdInvoiceId;
   }
 
   Future<void> updateSaleInvoice({
@@ -341,7 +344,7 @@ class SalesDao {
       await isar.invoices.put(invoice);
 
       // Record sync change for updated invoice
-      final _updateData = jsonEncode({
+      final updateData = jsonEncode({
         'id': invoiceId,
         'company_id': companyId,
         'transaction_id': invoice.transactionId,
@@ -354,15 +357,15 @@ class SalesDao {
         'paid_amount': invoice.paidAmount,
         'remaining_balance': invoice.remainingBalance,
       });
-      final _updateChange = SyncChange()
+      final updateChange = SyncChange()
         ..companyId = companyId
         ..table = 'invoices'
         ..operation = ChangeOperation.update
         ..recordId = invoiceId
-        ..data = _updateData
+        ..data = updateData
         ..createdAt = DateTime.now()
         ..synced = false;
-      await isar.syncChanges.put(_updateChange);
+      await isar.syncChanges.put(updateChange);
 
       // Delete old transaction lines and stock ledger entries
       final oldLines = await isar.transactionLines

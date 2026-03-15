@@ -250,7 +250,7 @@ class _SaleReturnFormScreenState extends ConsumerState<SaleReturnFormScreen> {
             backgroundColor: Colors.green,
           ),
         );
-        context.pop(); // Go back to return list
+        await _showPostSaveActions();
       }
     } catch (e) {
       if (mounted) {
@@ -272,10 +272,60 @@ class _SaleReturnFormScreenState extends ConsumerState<SaleReturnFormScreen> {
     );
   }
 
+  Future<void> _showPostSaveActions() async {
+    if (!mounted) return;
+
+    await showModalBottomSheet<void>(
+      context: context,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (context) {
+        return SafeArea(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const SizedBox(height: 8),
+              const Text(
+                'Sale Return Saved',
+                style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
+              ),
+              const SizedBox(height: 8),
+              ListTile(
+                leading:
+                    const Icon(Icons.add_circle_outline, color: Colors.orange),
+                title: const Text('New Sale Return'),
+                onTap: () {
+                  Navigator.pop(context);
+                  Navigator.pushReplacement(
+                    this.context,
+                    MaterialPageRoute(
+                      builder: (_) => const SaleReturnFormScreen(),
+                    ),
+                  );
+                },
+              ),
+              ListTile(
+                leading: const Icon(Icons.list_alt, color: Colors.blueGrey),
+                title: const Text('Back to Return List'),
+                onTap: () {
+                  Navigator.pop(context);
+                  this.context.go('/sale/return');
+                },
+              ),
+              const SizedBox(height: 8),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final company = ref.watch(currentCompanyProvider);
+    final isTablet = MediaQuery.of(context).size.width > 600;
 
     if (company == null) {
       return Scaffold(
@@ -289,8 +339,14 @@ class _SaleReturnFormScreenState extends ConsumerState<SaleReturnFormScreen> {
     return Scaffold(
       appBar: AppBar(
         title: Text(
-            widget.returnId != null ? 'Edit Sale Return' : 'New Sale Return'),
-        backgroundColor: theme.colorScheme.inversePrimary,
+          widget.returnId != null ? 'Edit Sale Return' : 'New Sale Return',
+          style: TextStyle(fontSize: isTablet ? 24 : 20),
+        ),
+        elevation: 0,
+        leading: IconButton(
+          icon: const Icon(Icons.arrow_back),
+          onPressed: () => Navigator.of(context).maybePop(),
+        ),
         actions: [
           if (_isLoading)
             const Center(
@@ -303,10 +359,17 @@ class _SaleReturnFormScreenState extends ConsumerState<SaleReturnFormScreen> {
                 ),
               ),
             ),
-          TextButton.icon(
-            onPressed: _isLoading ? null : _saveReturn,
-            icon: const Icon(Icons.save),
-            label: const Text('Save'),
+          Padding(
+            padding: const EdgeInsets.only(right: 16),
+            child: Center(
+              child: Text(
+                company.name,
+                style: const TextStyle(
+                  fontSize: 12,
+                  color: Colors.white70,
+                ),
+              ),
+            ),
           ),
         ],
       ),
@@ -317,365 +380,432 @@ class _SaleReturnFormScreenState extends ConsumerState<SaleReturnFormScreen> {
       ),
       body: Form(
         key: _formKey,
-        child: SingleChildScrollView(
-          padding: const EdgeInsets.all(16.0),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              // Return Details Card
-              Card(
-                child: Padding(
-                  padding: const EdgeInsets.all(16.0),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        'Return Details',
-                        style: theme.textTheme.titleLarge?.copyWith(
-                          fontWeight: FontWeight.bold,
-                        ),
-                      ),
-                      const SizedBox(height: 16),
-
-                      // Return Number and Date
-                      Row(
-                        children: [
-                          Expanded(
-                            child: TextFormField(
-                              controller: _returnNoController,
-                              decoration: const InputDecoration(
-                                labelText: 'Return Number',
-                                border: OutlineInputBorder(),
-                              ),
-                              validator: (value) {
-                                if (value == null || value.isEmpty) {
-                                  return 'Please enter return number';
-                                }
-                                return null;
-                              },
-                            ),
-                          ),
-                          const SizedBox(width: 16),
-                          Expanded(
-                            child: InkWell(
-                              onTap: () async {
-                                final date = await showDatePicker(
-                                  context: context,
-                                  initialDate: _returnDate,
-                                  firstDate: DateTime(2020),
-                                  lastDate: DateTime.now(),
-                                );
-                                if (date != null) {
-                                  setState(() {
-                                    _returnDate = date;
-                                  });
-                                }
-                              },
-                              child: InputDecorator(
-                                decoration: const InputDecoration(
-                                  labelText: 'Return Date',
-                                  border: OutlineInputBorder(),
-                                  suffixIcon: Icon(Icons.calendar_today),
-                                ),
-                                child: Text(_dateFormat.format(_returnDate)),
-                              ),
-                            ),
-                          ),
-                        ],
-                      ),
-                      const SizedBox(height: 16),
-
-                      // Customer Selection
-                      FutureBuilder<List<Party>>(
-                        future: _loadCustomers(),
-                        builder: (context, snapshot) {
-                          final customers = snapshot.data ?? [];
-
-                          // Ensure selected customer matches one from the list
-                          Party? validSelectedCustomer;
-                          if (_selectedCustomer != null &&
-                              customers.isNotEmpty) {
-                            validSelectedCustomer = customers.firstWhere(
-                              (customer) =>
-                                  customer.id == _selectedCustomer!.id,
-                              orElse: () => customers.first,
-                            );
-                          }
-
-                          return DropdownButtonFormField<Party>(
-                            initialValue: validSelectedCustomer,
-                            decoration: const InputDecoration(
-                              labelText: 'Select Customer',
-                              border: OutlineInputBorder(),
-                            ),
-                            items: customers.map((customer) {
-                              return DropdownMenuItem<Party>(
-                                value: customer,
-                                child: Text(customer.name),
-                              );
-                            }).toList(),
-                            onChanged: (customer) {
-                              setState(() {
-                                _selectedCustomer = customer;
-                                _selectedOriginalInvoice = null;
-                                _returnItems.clear();
-                                _totalReturnAmount = 0.0;
-                              });
-                            },
-                            validator: (value) {
-                              if (value == null) {
-                                return 'Please select a customer';
-                              }
-                              return null;
-                            },
-                          );
-                        },
-                      ),
-                      const SizedBox(height: 16),
-
-                      // Original Sales Invoice Selection
-                      if (_selectedCustomer != null)
-                        FutureBuilder<List<Invoice>>(
-                          future: _loadSalesInvoices(),
-                          builder: (context, snapshot) {
-                            final invoices = snapshot.data ?? [];
-
-                            // Ensure selected invoice matches one from the list
-                            Invoice? validSelectedInvoice;
-                            if (_selectedOriginalInvoice != null &&
-                                invoices.isNotEmpty) {
-                              validSelectedInvoice = invoices.firstWhere(
-                                (invoice) =>
-                                    invoice.id == _selectedOriginalInvoice!.id,
-                                orElse: () => invoices.first,
-                              );
-                            }
-
-                            return DropdownButtonFormField<Invoice>(
-                              initialValue: validSelectedInvoice,
-                              decoration: const InputDecoration(
-                                labelText: 'Select Original Sales Invoice',
-                                border: OutlineInputBorder(),
-                              ),
-                              items: invoices.map((invoice) {
-                                return DropdownMenuItem<Invoice>(
-                                  value: invoice,
-                                  child: FutureBuilder<Transaction?>(
-                                    future: ref
-                                        .read(isarServiceProvider)
-                                        .isar
-                                        .collection<Transaction>()
-                                        .get(invoice.transactionId),
-                                    builder: (context, txnSnapshot) {
-                                      final transaction = txnSnapshot.data;
-                                      return Text(
-                                        '${transaction?.referenceNo ?? 'N/A'} - ${_currencyFormat.format(invoice.grandTotal)} - ${_dateFormat.format(invoice.invoiceDate)}',
-                                      );
-                                    },
-                                  ),
-                                );
-                              }).toList(),
-                              onChanged: (invoice) {
-                                setState(() {
-                                  _selectedOriginalInvoice = invoice;
-                                });
-                                if (invoice != null) {
-                                  _loadOriginalInvoiceItems();
-                                }
-                              },
-                              validator: (value) {
-                                if (value == null) {
-                                  return 'Please select original sales invoice';
-                                }
-                                return null;
-                              },
-                            );
-                          },
-                        ),
-
-                      const SizedBox(height: 16),
-
-                      // Notes
-                      TextFormField(
-                        controller: _notesController,
-                        decoration: const InputDecoration(
-                          labelText: 'Notes (Optional)',
-                          border: OutlineInputBorder(),
-                        ),
-                        maxLines: 3,
-                      ),
-                    ],
-                  ),
-                ),
-              ),
-
-              const SizedBox(height: 16),
-
-              // Return Items Card
-              if (_returnItems.isNotEmpty) ...[
+        child: SafeArea(
+          child: SingleChildScrollView(
+            physics: const BouncingScrollPhysics(
+              parent: AlwaysScrollableScrollPhysics(),
+            ),
+            padding: EdgeInsets.fromLTRB(
+              isTablet ? 24 : 16,
+              isTablet ? 20 : 16,
+              isTablet ? 24 : 16,
+              (isTablet ? 20 : 16) + MediaQuery.of(context).viewInsets.bottom,
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                // Return Details Card
                 Card(
+                  elevation: 0,
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(12),
+                    side: BorderSide(color: Colors.grey.shade300),
+                  ),
                   child: Padding(
                     padding: const EdgeInsets.all(16.0),
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
+                        Text(
+                          'Return Details',
+                          style: theme.textTheme.titleLarge?.copyWith(
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                        const SizedBox(height: 16),
+
+                        // Return Number and Date
                         Row(
-                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
                           children: [
-                            Text(
-                              'Return Items',
-                              style: theme.textTheme.titleLarge?.copyWith(
-                                fontWeight: FontWeight.bold,
+                            Expanded(
+                              child: TextFormField(
+                                controller: _returnNoController,
+                                decoration: const InputDecoration(
+                                  labelText: 'Return Number',
+                                  border: OutlineInputBorder(),
+                                ),
+                                validator: (value) {
+                                  if (value == null || value.isEmpty) {
+                                    return 'Please enter return number';
+                                  }
+                                  return null;
+                                },
                               ),
                             ),
-                            Container(
-                              padding: const EdgeInsets.symmetric(
-                                horizontal: 12,
-                                vertical: 6,
-                              ),
-                              decoration: BoxDecoration(
-                                color:
-                                    theme.colorScheme.primary.withOpacity(0.1),
-                                borderRadius: BorderRadius.circular(20),
-                              ),
-                              child: Text(
-                                'Total: ${_currencyFormat.format(_totalReturnAmount)}',
-                                style: TextStyle(
-                                  fontWeight: FontWeight.bold,
-                                  color: theme.colorScheme.primary,
+                            const SizedBox(width: 16),
+                            Expanded(
+                              child: InkWell(
+                                onTap: () async {
+                                  final date = await showDatePicker(
+                                    context: context,
+                                    initialDate: _returnDate,
+                                    firstDate: DateTime(2020),
+                                    lastDate: DateTime.now(),
+                                  );
+                                  if (date != null) {
+                                    setState(() {
+                                      _returnDate = date;
+                                    });
+                                  }
+                                },
+                                child: InputDecorator(
+                                  decoration: const InputDecoration(
+                                    labelText: 'Return Date',
+                                    border: OutlineInputBorder(),
+                                    suffixIcon: Icon(Icons.calendar_today),
+                                  ),
+                                  child: Text(_dateFormat.format(_returnDate)),
                                 ),
                               ),
                             ),
                           ],
                         ),
                         const SizedBox(height: 16),
-                        ListView.builder(
-                          shrinkWrap: true,
-                          physics: const NeverScrollableScrollPhysics(),
-                          itemCount: _returnItems.length,
-                          itemBuilder: (context, index) {
-                            final item = _returnItems[index];
-                            return Card(
-                              margin: const EdgeInsets.only(bottom: 8),
-                              child: Padding(
-                                padding: const EdgeInsets.all(12.0),
-                                child: Column(
-                                  crossAxisAlignment: CrossAxisAlignment.start,
-                                  children: [
-                                    Text(
-                                      item.productName,
-                                      style: const TextStyle(
-                                        fontWeight: FontWeight.bold,
-                                      ),
-                                    ),
-                                    const SizedBox(height: 8),
-                                    Row(
-                                      children: [
-                                        Expanded(
-                                          child: Column(
-                                            crossAxisAlignment:
-                                                CrossAxisAlignment.start,
-                                            children: [
-                                              Text(
-                                                'Original Qty: ${item.originalQuantity}',
-                                                style: TextStyle(
-                                                  color: Colors.grey[600],
-                                                  fontSize: 12,
-                                                ),
-                                              ),
-                                              Text(
-                                                'Unit Price: ${_currencyFormat.format(item.originalUnitPrice)}',
-                                                style: TextStyle(
-                                                  color: Colors.grey[600],
-                                                  fontSize: 12,
-                                                ),
-                                              ),
-                                            ],
-                                          ),
-                                        ),
-                                        SizedBox(
-                                          width: 100,
-                                          child: TextFormField(
-                                            initialValue:
-                                                item.returnQuantity.toString(),
-                                            decoration: const InputDecoration(
-                                              labelText: 'Return Qty',
-                                              border: OutlineInputBorder(),
-                                              contentPadding:
-                                                  EdgeInsets.symmetric(
-                                                horizontal: 8,
-                                                vertical: 8,
-                                              ),
-                                            ),
-                                            keyboardType: TextInputType.number,
-                                            onChanged: (value) {
-                                              final qty =
-                                                  double.tryParse(value) ?? 0.0;
-                                              if (qty <=
-                                                  item.originalQuantity) {
-                                                item.returnQuantity = qty;
-                                                _calculateTotal();
-                                              }
-                                            },
-                                            validator: (value) {
-                                              final qty = double.tryParse(
-                                                      value ?? '') ??
-                                                  0.0;
-                                              if (qty < 0) {
-                                                return 'Invalid';
-                                              }
-                                              if (qty > item.originalQuantity) {
-                                                return 'Max ${item.originalQuantity}';
-                                              }
-                                              return null;
-                                            },
-                                          ),
-                                        ),
-                                        const SizedBox(width: 8),
-                                        Text(
-                                          _currencyFormat.format(
-                                            item.returnQuantity *
-                                                item.returnUnitPrice,
-                                          ),
-                                          style: const TextStyle(
-                                            fontWeight: FontWeight.bold,
-                                          ),
-                                        ),
-                                      ],
-                                    ),
-                                  ],
-                                ),
+
+                        // Customer Selection
+                        FutureBuilder<List<Party>>(
+                          future: _loadCustomers(),
+                          builder: (context, snapshot) {
+                            final customers = snapshot.data ?? [];
+
+                            // Ensure selected customer matches one from the list
+                            Party? validSelectedCustomer;
+                            if (_selectedCustomer != null &&
+                                customers.isNotEmpty) {
+                              validSelectedCustomer = customers.firstWhere(
+                                (customer) =>
+                                    customer.id == _selectedCustomer!.id,
+                                orElse: () => customers.first,
+                              );
+                            }
+
+                            return DropdownButtonFormField<Party>(
+                              initialValue: validSelectedCustomer,
+                              decoration: const InputDecoration(
+                                labelText: 'Select Customer',
+                                border: OutlineInputBorder(),
                               ),
+                              items: customers.map((customer) {
+                                return DropdownMenuItem<Party>(
+                                  value: customer,
+                                  child: Text(customer.name),
+                                );
+                              }).toList(),
+                              onChanged: (customer) {
+                                setState(() {
+                                  _selectedCustomer = customer;
+                                  _selectedOriginalInvoice = null;
+                                  _returnItems.clear();
+                                  _totalReturnAmount = 0.0;
+                                });
+                              },
+                              validator: (value) {
+                                if (value == null) {
+                                  return 'Please select a customer';
+                                }
+                                return null;
+                              },
                             );
                           },
+                        ),
+                        const SizedBox(height: 16),
+
+                        // Original Sales Invoice Selection
+                        if (_selectedCustomer != null)
+                          FutureBuilder<List<Invoice>>(
+                            future: _loadSalesInvoices(),
+                            builder: (context, snapshot) {
+                              final invoices = snapshot.data ?? [];
+
+                              // Ensure selected invoice matches one from the list
+                              Invoice? validSelectedInvoice;
+                              if (_selectedOriginalInvoice != null &&
+                                  invoices.isNotEmpty) {
+                                validSelectedInvoice = invoices.firstWhere(
+                                  (invoice) =>
+                                      invoice.id ==
+                                      _selectedOriginalInvoice!.id,
+                                  orElse: () => invoices.first,
+                                );
+                              }
+
+                              return DropdownButtonFormField<Invoice>(
+                                initialValue: validSelectedInvoice,
+                                decoration: const InputDecoration(
+                                  labelText: 'Select Original Sales Invoice',
+                                  border: OutlineInputBorder(),
+                                ),
+                                items: invoices.map((invoice) {
+                                  return DropdownMenuItem<Invoice>(
+                                    value: invoice,
+                                    child: FutureBuilder<Transaction?>(
+                                      future: ref
+                                          .read(isarServiceProvider)
+                                          .isar
+                                          .collection<Transaction>()
+                                          .get(invoice.transactionId),
+                                      builder: (context, txnSnapshot) {
+                                        final transaction = txnSnapshot.data;
+                                        return Text(
+                                          '${transaction?.referenceNo ?? 'N/A'} - ${_currencyFormat.format(invoice.grandTotal)} - ${_dateFormat.format(invoice.invoiceDate)}',
+                                        );
+                                      },
+                                    ),
+                                  );
+                                }).toList(),
+                                onChanged: (invoice) {
+                                  setState(() {
+                                    _selectedOriginalInvoice = invoice;
+                                  });
+                                  if (invoice != null) {
+                                    _loadOriginalInvoiceItems();
+                                  }
+                                },
+                                validator: (value) {
+                                  if (value == null) {
+                                    return 'Please select original sales invoice';
+                                  }
+                                  return null;
+                                },
+                              );
+                            },
+                          ),
+
+                        const SizedBox(height: 16),
+
+                        // Notes
+                        TextFormField(
+                          controller: _notesController,
+                          decoration: const InputDecoration(
+                            labelText: 'Notes (Optional)',
+                            border: OutlineInputBorder(),
+                          ),
+                          maxLines: 3,
                         ),
                       ],
                     ),
                   ),
                 ),
 
-                const SizedBox(height: 20),
+                const SizedBox(height: 16),
 
-                // Save Button
-                SizedBox(
-                  width: double.infinity,
-                  child: ElevatedButton.icon(
-                    onPressed: _isLoading ? null : _saveReturn,
-                    icon: _isLoading
-                        ? const SizedBox(
-                            width: 16,
-                            height: 16,
-                            child: CircularProgressIndicator(strokeWidth: 2),
-                          )
-                        : const Icon(Icons.save),
-                    label: Text(_isLoading ? 'Saving...' : 'Save Sale Return'),
-                    style: ElevatedButton.styleFrom(
-                      padding: const EdgeInsets.symmetric(vertical: 16),
+                // Return Items Card
+                if (_returnItems.isNotEmpty) ...[
+                  Card(
+                    elevation: 0,
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(12),
+                      side: BorderSide(color: Colors.grey.shade300),
+                    ),
+                    child: Padding(
+                      padding: const EdgeInsets.all(16.0),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Row(
+                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                            children: [
+                              Text(
+                                'Return Items',
+                                style: theme.textTheme.titleLarge?.copyWith(
+                                  fontWeight: FontWeight.bold,
+                                ),
+                              ),
+                              Container(
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 12,
+                                  vertical: 6,
+                                ),
+                                decoration: BoxDecoration(
+                                  color: theme.colorScheme.primary
+                                      .withOpacity(0.1),
+                                  borderRadius: BorderRadius.circular(20),
+                                ),
+                                child: Text(
+                                  'Total: ${_currencyFormat.format(_totalReturnAmount)}',
+                                  style: TextStyle(
+                                    fontWeight: FontWeight.bold,
+                                    color: theme.colorScheme.primary,
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
+                          const SizedBox(height: 16),
+                          ListView.builder(
+                            shrinkWrap: true,
+                            physics: const NeverScrollableScrollPhysics(),
+                            itemCount: _returnItems.length,
+                            itemBuilder: (context, index) {
+                              final item = _returnItems[index];
+                              return Card(
+                                margin: const EdgeInsets.only(bottom: 8),
+                                elevation: 0,
+                                shape: RoundedRectangleBorder(
+                                  borderRadius: BorderRadius.circular(10),
+                                  side: BorderSide(color: Colors.grey.shade300),
+                                ),
+                                child: Padding(
+                                  padding: const EdgeInsets.all(12.0),
+                                  child: Column(
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment.start,
+                                    children: [
+                                      Text(
+                                        item.productName,
+                                        style: const TextStyle(
+                                          fontWeight: FontWeight.bold,
+                                        ),
+                                      ),
+                                      const SizedBox(height: 8),
+                                      Row(
+                                        children: [
+                                          Expanded(
+                                            child: Column(
+                                              crossAxisAlignment:
+                                                  CrossAxisAlignment.start,
+                                              children: [
+                                                Text(
+                                                  'Original Qty: ${item.originalQuantity}',
+                                                  style: TextStyle(
+                                                    color: Colors.grey[600],
+                                                    fontSize: 12,
+                                                  ),
+                                                ),
+                                                Text(
+                                                  'Unit Price: ${_currencyFormat.format(item.originalUnitPrice)}',
+                                                  style: TextStyle(
+                                                    color: Colors.grey[600],
+                                                    fontSize: 12,
+                                                  ),
+                                                ),
+                                              ],
+                                            ),
+                                          ),
+                                          SizedBox(
+                                            width: 100,
+                                            child: TextFormField(
+                                              initialValue: item.returnQuantity
+                                                  .toString(),
+                                              decoration: const InputDecoration(
+                                                labelText: 'Return Qty',
+                                                border: OutlineInputBorder(),
+                                                contentPadding:
+                                                    EdgeInsets.symmetric(
+                                                  horizontal: 8,
+                                                  vertical: 8,
+                                                ),
+                                              ),
+                                              keyboardType:
+                                                  TextInputType.number,
+                                              onChanged: (value) {
+                                                final qty =
+                                                    double.tryParse(value) ??
+                                                        0.0;
+                                                if (qty <=
+                                                    item.originalQuantity) {
+                                                  item.returnQuantity = qty;
+                                                  _calculateTotal();
+                                                }
+                                              },
+                                              validator: (value) {
+                                                final qty = double.tryParse(
+                                                        value ?? '') ??
+                                                    0.0;
+                                                if (qty < 0) {
+                                                  return 'Invalid';
+                                                }
+                                                if (qty >
+                                                    item.originalQuantity) {
+                                                  return 'Max ${item.originalQuantity}';
+                                                }
+                                                return null;
+                                              },
+                                            ),
+                                          ),
+                                          const SizedBox(width: 8),
+                                          Text(
+                                            _currencyFormat.format(
+                                              item.returnQuantity *
+                                                  item.returnUnitPrice,
+                                            ),
+                                            style: const TextStyle(
+                                              fontWeight: FontWeight.bold,
+                                            ),
+                                          ),
+                                        ],
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                              );
+                            },
+                          ),
+                        ],
+                      ),
                     ),
                   ),
-                ),
+                  const SizedBox(height: 20),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: OutlinedButton(
+                          style: OutlinedButton.styleFrom(
+                            padding: EdgeInsets.symmetric(
+                                vertical: isTablet ? 16 : 12),
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(12),
+                            ),
+                            side: BorderSide(
+                                color: Colors.grey.shade400, width: 2),
+                          ),
+                          onPressed: () => Navigator.of(context).maybePop(),
+                          child: Text(
+                            'Cancel',
+                            style: TextStyle(
+                              color: Colors.grey.shade700,
+                              fontSize: isTablet ? 18 : 16,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                        ),
+                      ),
+                      SizedBox(width: isTablet ? 12 : 8),
+                      Expanded(
+                        child: ElevatedButton.icon(
+                          onPressed: _isLoading ? null : _saveReturn,
+                          icon: _isLoading
+                              ? const SizedBox(
+                                  width: 16,
+                                  height: 16,
+                                  child:
+                                      CircularProgressIndicator(strokeWidth: 2),
+                                )
+                              : const Icon(Icons.save, color: Colors.white),
+                          label: Text(
+                            _isLoading ? 'Saving...' : 'Save',
+                            style: TextStyle(
+                              color: Colors.white,
+                              fontSize: isTablet ? 18 : 16,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: Colors.blue.shade600,
+                            padding: EdgeInsets.symmetric(
+                                vertical: isTablet ? 16 : 12),
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(12),
+                            ),
+                            elevation: 2,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
               ],
-            ],
+            ),
           ),
         ),
       ),

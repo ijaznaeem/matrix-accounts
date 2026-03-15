@@ -1,6 +1,6 @@
 {
-    "name": "matrix_accounts",
-    "short_name": "matrix_accounts",
+    "name": "veyo_sync",
+    "short_name": "veyo_sync",
     "start_url": ".",
     "display": "standalone",
     "background_color": "#ffffff",

@@ -4,10 +4,10 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:intl/intl.dart';
 import 'package:isar/isar.dart';
-import 'package:matrix_accounts/data/models/party_model.dart';
 import 'package:pdf/pdf.dart';
 import 'package:pdf/widgets.dart' as pw;
 import 'package:printing/printing.dart';
+import 'package:veyo_sync/data/models/party_model.dart';
 
 import '../../../core/config/providers.dart';
 import '../../../core/widgets/navigation_drawer_helper.dart';
@@ -42,7 +42,6 @@ class _CashFlowScreenState extends ConsumerState<CashFlowScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final currentCompany = ref.watch(currentCompanyProvider);
     final theme = Theme.of(context);
 
     return Scaffold(

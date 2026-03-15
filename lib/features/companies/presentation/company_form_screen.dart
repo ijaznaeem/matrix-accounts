@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../../core/config/providers.dart';
+import '../../../core/providers/rbac_providers.dart';
 import '../../../data/models/company_model.dart';
 import '../services/company_service.dart';
 
@@ -167,220 +168,249 @@ class _CompanyFormScreenState extends ConsumerState<CompanyFormScreen> {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final isEditMode = _existingCompany != null;
+    final isAdminAsync = ref.watch(currentUserIsAdminProvider);
 
-    return Scaffold(
-      appBar: AppBar(
-        title: Text(isEditMode ? 'Edit Company' : 'Add Company'),
-        elevation: 0,
-      ),
-      body: _isLoading
-          ? const Center(child: CircularProgressIndicator())
-          : SingleChildScrollView(
-              padding: const EdgeInsets.all(16),
-              child: Form(
-                key: _formKey,
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: [
-                    // Company Name
-                    Card(
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(12),
-                      ),
-                      child: Padding(
-                        padding: const EdgeInsets.all(16),
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(
-                              'Basic Information',
-                              style: theme.textTheme.titleMedium?.copyWith(
-                                fontWeight: FontWeight.bold,
-                              ),
-                            ),
-                            const SizedBox(height: 16),
-                            TextFormField(
-                              controller: _nameController,
-                              decoration: InputDecoration(
-                                labelText: 'Company Name *',
-                                hintText: 'Enter company name',
-                                prefixIcon: const Icon(Icons.business),
-                                border: OutlineInputBorder(
-                                  borderRadius: BorderRadius.circular(12),
-                                ),
-                              ),
-                              validator: (value) {
-                                if (value == null || value.trim().isEmpty) {
-                                  return 'Company name is required';
-                                }
-                                if (value.trim().length < 3) {
-                                  return 'Company name must be at least 3 characters';
-                                }
-                                return null;
-                              },
-                            ),
-                          ],
-                        ),
-                      ),
-                    ),
-                    const SizedBox(height: 16),
+    return isAdminAsync.when(
+      data: (isAdmin) {
+        if (!isAdmin) {
+          return Scaffold(
+            appBar: AppBar(
+              title: Text(isEditMode ? 'Edit Company' : 'Add Company'),
+              elevation: 0,
+            ),
+            body: const Center(
+              child: Text('Only admin users can manage companies.'),
+            ),
+          );
+        }
 
-                    // Financial Settings
-                    Card(
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(12),
-                      ),
-                      child: Padding(
-                        padding: const EdgeInsets.all(16),
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(
-                              'Financial Settings',
-                              style: theme.textTheme.titleMedium?.copyWith(
-                                fontWeight: FontWeight.bold,
-                              ),
+        return Scaffold(
+          appBar: AppBar(
+            title: Text(isEditMode ? 'Edit Company' : 'Add Company'),
+            elevation: 0,
+          ),
+          body: _isLoading
+              ? const Center(child: CircularProgressIndicator())
+              : SingleChildScrollView(
+                  padding: const EdgeInsets.all(16),
+                  child: Form(
+                    key: _formKey,
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        // Company Name
+                        Card(
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                          child: Padding(
+                            padding: const EdgeInsets.all(16),
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  'Basic Information',
+                                  style: theme.textTheme.titleMedium?.copyWith(
+                                    fontWeight: FontWeight.bold,
+                                  ),
+                                ),
+                                const SizedBox(height: 16),
+                                TextFormField(
+                                  controller: _nameController,
+                                  decoration: InputDecoration(
+                                    labelText: 'Company Name *',
+                                    hintText: 'Enter company name',
+                                    prefixIcon: const Icon(Icons.business),
+                                    border: OutlineInputBorder(
+                                      borderRadius: BorderRadius.circular(12),
+                                    ),
+                                  ),
+                                  validator: (value) {
+                                    if (value == null || value.trim().isEmpty) {
+                                      return 'Company name is required';
+                                    }
+                                    if (value.trim().length < 3) {
+                                      return 'Company name must be at least 3 characters';
+                                    }
+                                    return null;
+                                  },
+                                ),
+                              ],
                             ),
-                            const SizedBox(height: 16),
-
-                            // Currency Dropdown
-                            DropdownButtonFormField<String>(
-                              initialValue: _currencyController.text,
-                              decoration: InputDecoration(
-                                labelText: 'Primary Currency *',
-                                prefixIcon: const Icon(Icons.currency_exchange),
-                                border: OutlineInputBorder(
-                                  borderRadius: BorderRadius.circular(12),
-                                ),
-                              ),
-                              items: _currencies.map((currency) {
-                                return DropdownMenuItem(
-                                  value: currency,
-                                  child: Text(currency),
-                                );
-                              }).toList(),
-                              onChanged: (value) {
-                                if (value != null) {
-                                  _currencyController.text = value;
-                                }
-                              },
-                            ),
-                            const SizedBox(height: 16),
-
-                            // Financial Year Start Month
-                            DropdownButtonFormField<int>(
-                              initialValue: _selectedMonth,
-                              decoration: InputDecoration(
-                                labelText: 'Financial Year Start Month *',
-                                prefixIcon: const Icon(Icons.calendar_month),
-                                border: OutlineInputBorder(
-                                  borderRadius: BorderRadius.circular(12),
-                                ),
-                              ),
-                              items: _months.map((month) {
-                                return DropdownMenuItem(
-                                  value: month['value'] as int,
-                                  child: Text(month['name'] as String),
-                                );
-                              }).toList(),
-                              onChanged: (value) {
-                                if (value != null) {
-                                  setState(() => _selectedMonth = value);
-                                }
-                              },
-                            ),
-                          ],
-                        ),
-                      ),
-                    ),
-                    const SizedBox(height: 16),
-
-                    // Status (only for edit mode)
-                    if (isEditMode)
-                      Card(
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(12),
-                        ),
-                        child: Padding(
-                          padding: const EdgeInsets.all(16),
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Text(
-                                'Status',
-                                style: theme.textTheme.titleMedium?.copyWith(
-                                  fontWeight: FontWeight.bold,
-                                ),
-                              ),
-                              const SizedBox(height: 8),
-                              SwitchListTile(
-                                title: const Text('Active'),
-                                subtitle: Text(
-                                  _isActive
-                                      ? 'Company is active and visible'
-                                      : 'Company is inactive and hidden',
-                                  style: theme.textTheme.bodySmall,
-                                ),
-                                value: _isActive,
-                                onChanged: (value) {
-                                  setState(() => _isActive = value);
-                                },
-                                contentPadding: EdgeInsets.zero,
-                              ),
-                            ],
                           ),
                         ),
-                      ),
-                    const SizedBox(height: 24),
+                        const SizedBox(height: 16),
 
-                    // Save Button
-                    FilledButton(
-                      onPressed: _isLoading ? null : _saveCompany,
-                      style: FilledButton.styleFrom(
-                        padding: const EdgeInsets.symmetric(vertical: 16),
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(12),
+                        // Financial Settings
+                        Card(
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                          child: Padding(
+                            padding: const EdgeInsets.all(16),
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  'Financial Settings',
+                                  style: theme.textTheme.titleMedium?.copyWith(
+                                    fontWeight: FontWeight.bold,
+                                  ),
+                                ),
+                                const SizedBox(height: 16),
+
+                                // Currency Dropdown
+                                DropdownButtonFormField<String>(
+                                  initialValue: _currencyController.text,
+                                  decoration: InputDecoration(
+                                    labelText: 'Primary Currency *',
+                                    prefixIcon:
+                                        const Icon(Icons.currency_exchange),
+                                    border: OutlineInputBorder(
+                                      borderRadius: BorderRadius.circular(12),
+                                    ),
+                                  ),
+                                  items: _currencies.map((currency) {
+                                    return DropdownMenuItem(
+                                      value: currency,
+                                      child: Text(currency),
+                                    );
+                                  }).toList(),
+                                  onChanged: (value) {
+                                    if (value != null) {
+                                      _currencyController.text = value;
+                                    }
+                                  },
+                                ),
+                                const SizedBox(height: 16),
+
+                                // Financial Year Start Month
+                                DropdownButtonFormField<int>(
+                                  initialValue: _selectedMonth,
+                                  decoration: InputDecoration(
+                                    labelText: 'Financial Year Start Month *',
+                                    prefixIcon:
+                                        const Icon(Icons.calendar_month),
+                                    border: OutlineInputBorder(
+                                      borderRadius: BorderRadius.circular(12),
+                                    ),
+                                  ),
+                                  items: _months.map((month) {
+                                    return DropdownMenuItem(
+                                      value: month['value'] as int,
+                                      child: Text(month['name'] as String),
+                                    );
+                                  }).toList(),
+                                  onChanged: (value) {
+                                    if (value != null) {
+                                      setState(() => _selectedMonth = value);
+                                    }
+                                  },
+                                ),
+                              ],
+                            ),
+                          ),
                         ),
-                      ),
-                      child: _isLoading
-                          ? const SizedBox(
-                              height: 20,
-                              width: 20,
-                              child: CircularProgressIndicator(
-                                strokeWidth: 2,
-                              ),
-                            )
-                          : Text(
-                              isEditMode ? 'Update Company' : 'Create Company',
-                              style: const TextStyle(
-                                fontSize: 16,
-                                fontWeight: FontWeight.bold,
+                        const SizedBox(height: 16),
+
+                        // Status (only for edit mode)
+                        if (isEditMode)
+                          Card(
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(12),
+                            ),
+                            child: Padding(
+                              padding: const EdgeInsets.all(16),
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text(
+                                    'Status',
+                                    style:
+                                        theme.textTheme.titleMedium?.copyWith(
+                                      fontWeight: FontWeight.bold,
+                                    ),
+                                  ),
+                                  const SizedBox(height: 8),
+                                  SwitchListTile(
+                                    title: const Text('Active'),
+                                    subtitle: Text(
+                                      _isActive
+                                          ? 'Company is active and visible'
+                                          : 'Company is inactive and hidden',
+                                      style: theme.textTheme.bodySmall,
+                                    ),
+                                    value: _isActive,
+                                    onChanged: (value) {
+                                      setState(() => _isActive = value);
+                                    },
+                                    contentPadding: EdgeInsets.zero,
+                                  ),
+                                ],
                               ),
                             ),
-                    ),
-                    const SizedBox(height: 16),
+                          ),
+                        const SizedBox(height: 24),
 
-                    // Cancel Button
-                    OutlinedButton(
-                      onPressed: _isLoading ? null : () => context.pop(),
-                      style: OutlinedButton.styleFrom(
-                        padding: const EdgeInsets.symmetric(vertical: 16),
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(12),
+                        // Save Button
+                        FilledButton(
+                          onPressed: _isLoading ? null : _saveCompany,
+                          style: FilledButton.styleFrom(
+                            padding: const EdgeInsets.symmetric(vertical: 16),
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(12),
+                            ),
+                          ),
+                          child: _isLoading
+                              ? const SizedBox(
+                                  height: 20,
+                                  width: 20,
+                                  child: CircularProgressIndicator(
+                                    strokeWidth: 2,
+                                  ),
+                                )
+                              : Text(
+                                  isEditMode
+                                      ? 'Update Company'
+                                      : 'Create Company',
+                                  style: const TextStyle(
+                                    fontSize: 16,
+                                    fontWeight: FontWeight.bold,
+                                  ),
+                                ),
                         ),
-                      ),
-                      child: const Text(
-                        'Cancel',
-                        style: TextStyle(
-                          fontSize: 16,
-                          fontWeight: FontWeight.bold,
+                        const SizedBox(height: 16),
+
+                        // Cancel Button
+                        OutlinedButton(
+                          onPressed: _isLoading ? null : () => context.pop(),
+                          style: OutlinedButton.styleFrom(
+                            padding: const EdgeInsets.symmetric(vertical: 16),
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(12),
+                            ),
+                          ),
+                          child: const Text(
+                            'Cancel',
+                            style: TextStyle(
+                              fontSize: 16,
+                              fontWeight: FontWeight.bold,
+                            ),
+                          ),
                         ),
-                      ),
+                      ],
                     ),
-                  ],
+                  ),
                 ),
-              ),
-            ),
+        );
+      },
+      loading: () => const Scaffold(
+        body: Center(child: CircularProgressIndicator()),
+      ),
+      error: (error, _) => Scaffold(
+        appBar: AppBar(title: const Text('Company')),
+        body: Center(child: Text('Error: $error')),
+      ),
     );
   }
 }

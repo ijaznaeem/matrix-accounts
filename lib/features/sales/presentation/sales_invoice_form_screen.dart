@@ -4,8 +4,12 @@ import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:go_router/go_router.dart';
 import 'package:isar/isar.dart';
 import 'package:path_provider/path_provider.dart';
+import 'package:pdf/pdf.dart';
+import 'package:pdf/widgets.dart' as pw;
+import 'package:printing/printing.dart';
 import 'package:share_plus/share_plus.dart';
 
 import '../../../core/config/providers.dart';
@@ -86,10 +90,10 @@ class _SalesInvoiceFormScreenState
   double _shippingCharge = 0;
   double _paidAmount = 0;
   double _previousBalance = 0;
-  double _totalPayableAmount = 0;
-  double _remainingBalance = 0;
   bool _isLoading = true;
-  bool _showAllItems = false;
+  int? _lastSavedInvoiceId;
+
+  int? get _activeInvoiceId => widget.invoiceId ?? _lastSavedInvoiceId;
 
   @override
   void initState() {
@@ -98,10 +102,7 @@ class _SalesInvoiceFormScreenState
       setState(() {});
     });
     _itemSearchFocus.addListener(() {
-      setState(() {
-        _showAllItems = _itemSearchFocus.hasFocus;
-        // Force rebuild when focus changes
-      });
+      setState(() {});
     });
     if (widget.invoiceId != null) {
       _loadInvoice();
@@ -229,6 +230,7 @@ class _SalesInvoiceFormScreenState
         // this is the single source of truth; do NOT rely on reconstructing
         // it from AccountTransactions (PaymentAccount lookup can fail).
         _paidAmount = invoice.paidAmount;
+        _previousBalance = invoice.previousBalance;
         _cashAmountCtrl.text =
             invoice.paidAmount > 0 ? invoice.paidAmount.toStringAsFixed(2) : '';
 
@@ -393,8 +395,6 @@ class _SalesInvoiceFormScreenState
   void _calculateTotalPayable() {
     final newSaleAmount =
         _subTotal; // Use subtotal to avoid circular references
-    _totalPayableAmount = _previousBalance + newSaleAmount;
-    _remainingBalance = _totalPayableAmount - _paidAmount;
     if (mounted) {
       setState(() {});
     }
@@ -502,42 +502,6 @@ class _SalesInvoiceFormScreenState
               onPressed: () => Navigator.of(context).maybePop(),
             ),
             actions: [
-              // Share button for all invoices (new and existing)
-              PopupMenuButton<String>(
-                icon: const Icon(Icons.share),
-                tooltip: 'Share Invoice',
-                onSelected: (String value) {
-                  if (value == 'whatsapp') {
-                    _shareToWhatsApp(company);
-                  } else if (value == 'pdf') {
-                    _shareAsPDF(company);
-                  } else if (value == 'image') {
-                    _shareAsImage(company);
-                  }
-                },
-                itemBuilder: (BuildContext context) => <PopupMenuEntry<String>>[
-                  const PopupMenuItem<String>(
-                    value: 'whatsapp',
-                    child: Row(
-                      children: [
-                        Icon(Icons.chat, color: Colors.green),
-                        SizedBox(width: 12),
-                        Text('Share to WhatsApp'),
-                      ],
-                    ),
-                  ),
-                  const PopupMenuItem<String>(
-                    value: 'image',
-                    child: Row(
-                      children: [
-                        Icon(Icons.image, color: Colors.blue),
-                        SizedBox(width: 12),
-                        Text('Share as Image'),
-                      ],
-                    ),
-                  ),
-                ],
-              ),
               Padding(
                 padding: const EdgeInsets.only(right: 16),
                 child: Center(
@@ -735,6 +699,43 @@ class _SalesInvoiceFormScreenState
                         SizedBox(height: isTablet ? 12 : 10),
                         Divider(color: Colors.grey.shade300),
                         SizedBox(height: isTablet ? 12 : 10),
+                        // Opening Balance Row
+                        Row(
+                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                          children: [
+                            Text(
+                              'Opening Balance',
+                              style: TextStyle(
+                                fontSize: isTablet ? 16 : 14,
+                                color: Colors.grey.shade700,
+                                fontWeight: FontWeight.w500,
+                              ),
+                            ),
+                            Row(
+                              children: [
+                                Text(
+                                  'RS ',
+                                  style: TextStyle(
+                                    fontSize: isTablet ? 14 : 12,
+                                    color: Colors.grey.shade700,
+                                    fontWeight: FontWeight.w500,
+                                  ),
+                                ),
+                                Text(
+                                  _previousBalance.toStringAsFixed(2),
+                                  style: TextStyle(
+                                    fontSize: isTablet ? 18 : 16,
+                                    fontWeight: FontWeight.w700,
+                                    color: Colors.grey.shade900,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ],
+                        ),
+                        SizedBox(height: isTablet ? 12 : 10),
+                        Divider(color: Colors.grey.shade300),
+                        SizedBox(height: isTablet ? 12 : 10),
                         // Total Amount Row
                         Row(
                           mainAxisAlignment: MainAxisAlignment.spaceBetween,
@@ -833,7 +834,9 @@ class _SalesInvoiceFormScreenState
                                     ),
                                   ),
                                   Text(
-                                    (_grandTotal - _paidAmount)
+                                    (_previousBalance +
+                                            _grandTotal -
+                                            _paidAmount)
                                         .toStringAsFixed(2),
                                     style: TextStyle(
                                       fontSize: isTablet ? 20 : 18,
@@ -975,6 +978,8 @@ class _SalesInvoiceFormScreenState
     }
 
     try {
+      int? savedInvoiceId = widget.invoiceId;
+
       if (widget.invoiceId != null) {
         // Update existing invoice
         await salesDao.updateSaleInvoice(
@@ -987,18 +992,9 @@ class _SalesInvoiceFormScreenState
           paymentLines: paymentInputs,
           userId: user?.id,
         );
-
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-              content: Text('Invoice updated successfully'),
-              backgroundColor: Colors.green,
-            ),
-          );
-        }
       } else {
-        // Create new invoice
-        await salesDao.createSaleInvoice(
+        // Create new invoice – use returned invoice ID directly
+        savedInvoiceId = await salesDao.createSaleInvoice(
           companyId: company.id,
           customer: _selectedCustomer!,
           date: _date,
@@ -1007,15 +1003,12 @@ class _SalesInvoiceFormScreenState
           paymentLines: paymentInputs,
           userId: user?.id,
         );
+      }
 
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-              content: Text('Invoice saved successfully'),
-              backgroundColor: Colors.green,
-            ),
-          );
-        }
+      _lastSavedInvoiceId = savedInvoiceId;
+
+      if (mounted) {
+        await _showPostSaveActions(company);
       }
     } catch (e) {
       if (mounted) {
@@ -1028,6 +1021,118 @@ class _SalesInvoiceFormScreenState
         );
       }
     }
+  }
+
+  Future<void> _showPostSaveActions(Company company) async {
+    await showModalBottomSheet<void>(
+      context: context,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (context) {
+        return SafeArea(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const SizedBox(height: 8),
+              const Text(
+                'Invoice Saved',
+                style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
+              ),
+              const SizedBox(height: 8),
+              ListTile(
+                leading: const Icon(Icons.chat, color: Colors.green),
+                title: const Text('Send on WhatsApp'),
+                onTap: () async {
+                  Navigator.pop(context);
+                  await _shareToWhatsApp(company);
+                },
+              ),
+              ListTile(
+                leading: const Icon(Icons.image, color: Colors.blue),
+                title: const Text('Share as Image'),
+                onTap: () async {
+                  Navigator.pop(context);
+                  await _shareAsImage(company);
+                },
+              ),
+              ListTile(
+                leading: const Icon(Icons.print, color: Colors.deepPurple),
+                title: const Text('Print Invoice'),
+                onTap: () async {
+                  Navigator.pop(context);
+                  await _shareAsPDF(company);
+                },
+              ),
+              ListTile(
+                leading:
+                    const Icon(Icons.add_circle_outline, color: Colors.orange),
+                title: const Text('New Sale'),
+                onTap: () {
+                  Navigator.pop(context);
+                  Navigator.pushReplacement(
+                    this.context,
+                    MaterialPageRoute(
+                      builder: (_) => const SalesInvoiceFormScreen(),
+                    ),
+                  );
+                },
+              ),
+              const SizedBox(height: 8),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
+  Future<void> _showAfterShareOrPrintActions() async {
+    if (!mounted) return;
+
+    await showModalBottomSheet<void>(
+      context: context,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (context) {
+        return SafeArea(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const SizedBox(height: 8),
+              const Text(
+                'What next?',
+                style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
+              ),
+              const SizedBox(height: 8),
+              ListTile(
+                leading:
+                    const Icon(Icons.add_circle_outline, color: Colors.orange),
+                title: const Text('New Sale'),
+                onTap: () {
+                  Navigator.pop(context);
+                  Navigator.pushReplacement(
+                    this.context,
+                    MaterialPageRoute(
+                      builder: (_) => const SalesInvoiceFormScreen(),
+                    ),
+                  );
+                },
+              ),
+              ListTile(
+                leading: const Icon(Icons.list_alt, color: Colors.blueGrey),
+                title: const Text('Back to Invoice List'),
+                onTap: () {
+                  Navigator.pop(context);
+                  this.context.go('/sales');
+                },
+              ),
+              const SizedBox(height: 8),
+            ],
+          ),
+        );
+      },
+    );
   }
 
   Widget _buildCustomerSelector(BuildContext context) {
@@ -1522,9 +1627,7 @@ class _SalesInvoiceFormScreenState
             focusNode: _itemSearchFocus,
             onChanged: (value) => setState(() {}),
             onTap: () {
-              setState(() {
-                _showAllItems = true;
-              });
+              setState(() {});
             },
             decoration: InputDecoration(
               hintText: 'Search & Add Items (Name, SKU)...',
@@ -1984,279 +2087,6 @@ class _SalesInvoiceFormScreenState
     );
   }
 
-  Widget _buildInvoiceSummaryCard(bool isTablet) {
-    final validLines =
-        _lines.where((l) => l.productId != null && l.qty > 0 && l.rate > 0);
-    final totalQty = validLines.fold<double>(0, (sum, l) => sum + l.qty);
-    final totalAmount =
-        validLines.fold<double>(0, (sum, l) => sum + (l.qty * l.rate));
-    final balanceDue = totalAmount - _paidAmount;
-
-    return Card(
-      elevation: 2,
-      shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(12),
-      ),
-      child: Container(
-        decoration: BoxDecoration(
-          borderRadius: BorderRadius.circular(12),
-          color: Colors.white,
-        ),
-        child: Column(
-          children: [
-            // Billed Items Header
-            Container(
-              padding: EdgeInsets.all(isTablet ? 16 : 12),
-              decoration: BoxDecoration(
-                borderRadius: const BorderRadius.only(
-                  topLeft: Radius.circular(12),
-                  topRight: Radius.circular(12),
-                ),
-                color: Colors.grey.shade50,
-              ),
-              child: Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                children: [
-                  Text(
-                    'Billed Items',
-                    style: TextStyle(
-                      fontSize: isTablet ? 16 : 14,
-                      fontWeight: FontWeight.w700,
-                      color: Colors.grey.shade900,
-                    ),
-                  ),
-                  Text(
-                    'Delete Items',
-                    style: TextStyle(
-                      fontSize: isTablet ? 12 : 11,
-                      color: Colors.grey.shade500,
-                    ),
-                  ),
-                ],
-              ),
-            ),
-            // Items List Table
-            if (validLines.isNotEmpty) ...[
-              Padding(
-                padding: EdgeInsets.symmetric(
-                  horizontal: isTablet ? 16 : 12,
-                  vertical: isTablet ? 12 : 8,
-                ),
-                child: Row(
-                  children: [
-                    Expanded(
-                        flex: 2,
-                        child: Text('Item Name',
-                            style: TextStyle(
-                                fontSize: isTablet ? 12 : 10,
-                                fontWeight: FontWeight.w600,
-                                color: Colors.grey.shade600))),
-                    Expanded(
-                        child: Text('Qty',
-                            style: TextStyle(
-                                fontSize: isTablet ? 12 : 10,
-                                fontWeight: FontWeight.w600,
-                                color: Colors.grey.shade600),
-                            textAlign: TextAlign.center)),
-                    Expanded(
-                        child: Text('Rate',
-                            style: TextStyle(
-                                fontSize: isTablet ? 12 : 10,
-                                fontWeight: FontWeight.w600,
-                                color: Colors.grey.shade600),
-                            textAlign: TextAlign.center)),
-                    Expanded(
-                        child: Text('Amount',
-                            style: TextStyle(
-                                fontSize: isTablet ? 12 : 10,
-                                fontWeight: FontWeight.w600,
-                                color: Colors.grey.shade600),
-                            textAlign: TextAlign.right)),
-                  ],
-                ),
-              ),
-              Divider(height: 1, color: Colors.grey.shade200),
-              ...validLines
-                  .map((line) => Padding(
-                        padding: EdgeInsets.symmetric(
-                            horizontal: isTablet ? 16 : 12,
-                            vertical: isTablet ? 10 : 8),
-                        child: Row(
-                          children: [
-                            Expanded(
-                                flex: 2,
-                                child: Text(line.productName ?? 'Unknown',
-                                    style: TextStyle(
-                                        fontSize: isTablet ? 13 : 11,
-                                        color: Colors.grey.shade900),
-                                    maxLines: 1,
-                                    overflow: TextOverflow.ellipsis)),
-                            Expanded(
-                                child: Text(
-                                    line.qty == line.qty.roundToDouble()
-                                        ? line.qty.toStringAsFixed(0)
-                                        : line.qty.toStringAsFixed(2),
-                                    style: TextStyle(
-                                        fontSize: isTablet ? 13 : 11,
-                                        color: Colors.grey.shade700),
-                                    textAlign: TextAlign.center)),
-                            Expanded(
-                                child: Text(line.rate.toStringAsFixed(2),
-                                    style: TextStyle(
-                                        fontSize: isTablet ? 13 : 11,
-                                        color: Colors.grey.shade700),
-                                    textAlign: TextAlign.center)),
-                            Expanded(
-                                child: Text(
-                                    (line.qty * line.rate).toStringAsFixed(1),
-                                    style: TextStyle(
-                                        fontSize: isTablet ? 13 : 11,
-                                        color: Colors.grey.shade900,
-                                        fontWeight: FontWeight.w600),
-                                    textAlign: TextAlign.right)),
-                          ],
-                        ),
-                      ))
-                  .toList(),
-              Divider(height: 1, color: Colors.grey.shade300),
-              Padding(
-                padding: EdgeInsets.symmetric(
-                    horizontal: isTablet ? 16 : 12,
-                    vertical: isTablet ? 10 : 8),
-                child: Row(
-                  children: [
-                    Expanded(
-                        flex: 2,
-                        child: Text('Total',
-                            style: TextStyle(
-                                fontSize: isTablet ? 14 : 12,
-                                fontWeight: FontWeight.w700,
-                                color: Colors.grey.shade900))),
-                    Expanded(
-                        child: Text(totalQty.toStringAsFixed(1),
-                            style: TextStyle(
-                                fontSize: isTablet ? 14 : 12,
-                                fontWeight: FontWeight.w700,
-                                color: Colors.grey.shade900),
-                            textAlign: TextAlign.center)),
-                    const Expanded(child: SizedBox()),
-                    Expanded(
-                        child: Text(totalAmount.toStringAsFixed(1),
-                            style: TextStyle(
-                                fontSize: isTablet ? 14 : 12,
-                                fontWeight: FontWeight.w700,
-                                color: Colors.grey.shade900),
-                            textAlign: TextAlign.right)),
-                  ],
-                ),
-              ),
-              Divider(height: 1, color: Colors.grey.shade200),
-            ],
-            // Total Amount
-            Padding(
-              padding: EdgeInsets.all(isTablet ? 16 : 12),
-              child: Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                  children: [
-                    Text('Total Amount',
-                        style: TextStyle(
-                            fontSize: isTablet ? 14 : 12,
-                            color: Colors.grey.shade600,
-                            fontWeight: FontWeight.w500)),
-                    Row(children: [
-                      Text('Rs',
-                          style: TextStyle(
-                              fontSize: isTablet ? 14 : 12,
-                              color: Colors.grey.shade700,
-                              fontWeight: FontWeight.w500)),
-                      SizedBox(width: isTablet ? 16 : 12),
-                      Text(totalAmount.toStringAsFixed(1),
-                          style: TextStyle(
-                              fontSize: isTablet ? 18 : 16,
-                              fontWeight: FontWeight.w800,
-                              color: Colors.grey.shade900))
-                    ]),
-                  ]),
-            ),
-            Divider(height: 1, color: Colors.grey.shade200),
-            // Paid Section
-            Padding(
-              padding: EdgeInsets.all(isTablet ? 16 : 12),
-              child: Row(children: [
-                Checkbox(value: _paidAmount > 0, onChanged: (value) {}),
-                Text('Paid',
-                    style: TextStyle(
-                        fontSize: isTablet ? 14 : 12,
-                        color: Colors.grey.shade700,
-                        fontWeight: FontWeight.w500)),
-                const Spacer(),
-                Text('Rs',
-                    style: TextStyle(
-                        fontSize: isTablet ? 12 : 11,
-                        color: Colors.grey.shade600)),
-                SizedBox(width: isTablet ? 12 : 8),
-                SizedBox(
-                  width: isTablet ? 140 : 100,
-                  child: TextField(
-                    keyboardType:
-                        const TextInputType.numberWithOptions(decimal: true),
-                    textAlign: TextAlign.right,
-                    controller: TextEditingController(
-                        text: _paidAmount > 0
-                            ? _paidAmount.toStringAsFixed(2)
-                            : ''),
-                    style: TextStyle(fontSize: isTablet ? 14 : 12),
-                    decoration: InputDecoration(
-                        isDense: true,
-                        border: UnderlineInputBorder(
-                            borderSide:
-                                BorderSide(color: Colors.grey.shade300)),
-                        contentPadding: const EdgeInsets.symmetric(
-                            horizontal: 8, vertical: 6)),
-                    onChanged: (value) => setState(
-                        () => _paidAmount = double.tryParse(value) ?? 0),
-                  ),
-                ),
-              ]),
-            ),
-            Divider(height: 1, color: Colors.grey.shade300),
-            // Balance Due
-            Container(
-              padding: EdgeInsets.all(isTablet ? 16 : 12),
-              decoration: BoxDecoration(
-                  borderRadius: const BorderRadius.only(
-                      bottomLeft: Radius.circular(12),
-                      bottomRight: Radius.circular(12)),
-                  color: const Color(0xFF26C485).withOpacity(0.05)),
-              child: Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                  children: [
-                    Text('Balance Due',
-                        style: TextStyle(
-                            fontSize: isTablet ? 16 : 14,
-                            fontWeight: FontWeight.w700,
-                            color: const Color(0xFF26C485))),
-                    Row(children: [
-                      Text('Rs',
-                          style: TextStyle(
-                              fontSize: isTablet ? 14 : 12,
-                              color: const Color(0xFF26C485),
-                              fontWeight: FontWeight.w600)),
-                      SizedBox(width: isTablet ? 16 : 12),
-                      Text(balanceDue.toStringAsFixed(1),
-                          style: TextStyle(
-                              fontSize: isTablet ? 20 : 18,
-                              fontWeight: FontWeight.w800,
-                              color: const Color(0xFF26C485)))
-                    ]),
-                  ]),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
   Widget _buildPaymentLinesSection() {
     final isTablet = MediaQuery.of(context).size.width > 600;
     final paymentAccountsAsync = ref.watch(paymentAccountsProvider);
@@ -2476,12 +2306,44 @@ class _SalesInvoiceFormScreenState
   }
 
   Future<void> _shareAsPDF(Company company) async {
-    if (widget.invoiceId == null) return;
+    if (_activeInvoiceId == null) return;
 
     try {
       // Get the invoice data
       final invoiceData = await _getInvoiceDataForShare(company);
       if (invoiceData == null) return;
+
+      final imageBytes = await InvoiceGenerator.generateInvoiceImage(
+        company: invoiceData['company'],
+        party: invoiceData['customer'],
+        invoice: invoiceData['invoice'],
+        transaction: invoiceData['transaction'],
+        lineItems: invoiceData['lineItems'],
+        paymentLines: invoiceData['paymentDetails'],
+        customerBalance: invoiceData['customerBalance'],
+        openingBalance: invoiceData['openingBalance'],
+      );
+
+      final memoryImage = pw.MemoryImage(imageBytes);
+      await Printing.layoutPdf(
+        onLayout: (PdfPageFormat format) async {
+          final doc = pw.Document();
+          doc.addPage(
+            pw.Page(
+              pageFormat: format,
+              margin: pw.EdgeInsets.zero,
+              build: (_) => pw.Center(
+                child: pw.Image(memoryImage, fit: pw.BoxFit.contain),
+              ),
+            ),
+          );
+          return doc.save();
+        },
+      );
+
+      if (mounted) {
+        await _showAfterShareOrPrintActions();
+      }
     } catch (e) {
       print('Error sharing PDF: $e');
       if (mounted) {
@@ -2496,7 +2358,7 @@ class _SalesInvoiceFormScreenState
   }
 
   Future<void> _shareToWhatsApp(Company company) async {
-    if (widget.invoiceId == null) {
+    if (_activeInvoiceId == null) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
           content: Text('Please save the invoice first before sharing'),
@@ -2603,6 +2465,8 @@ class _SalesInvoiceFormScreenState
               ),
             );
           }
+
+          await _showAfterShareOrPrintActions();
         } else {
           ScaffoldMessenger.of(context).showSnackBar(
             const SnackBar(
@@ -2628,7 +2492,7 @@ class _SalesInvoiceFormScreenState
   }
 
   Future<void> _shareAsImage(Company company) async {
-    if (widget.invoiceId == null) return;
+    if (_activeInvoiceId == null) return;
 
     try {
       // Get the invoice data
@@ -2646,6 +2510,10 @@ class _SalesInvoiceFormScreenState
         customerBalance: invoiceData['customerBalance'],
         openingBalance: invoiceData['openingBalance'],
       );
+
+      if (mounted) {
+        await _showAfterShareOrPrintActions();
+      }
     } catch (e) {
       print('Error sharing image: $e');
       if (mounted) {
@@ -2667,7 +2535,12 @@ class _SalesInvoiceFormScreenState
     final salesDao = SalesDao(isar);
 
     // Fetch the invoice
-    final invoice = await invoiceService.getSaleInvoiceById(widget.invoiceId!);
+    final activeInvoiceId = _activeInvoiceId;
+    if (activeInvoiceId == null) {
+      return null;
+    }
+
+    final invoice = await invoiceService.getSaleInvoiceById(activeInvoiceId);
     if (invoice == null) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -2728,14 +2601,14 @@ class _SalesInvoiceFormScreenState
     List<Map<String, dynamic>>? paymentDetails = [];
 
     print('=== PAYMENT DATA DEBUG in _getInvoiceDataForShare ===');
-    print('widget.invoiceId: ${widget.invoiceId}');
+    print('activeInvoiceId: $activeInvoiceId');
     print('_paidAmount: $_paidAmount');
     print('_paymentLines.length: ${_paymentLines.length}');
 
     // Get payment lines from database if invoice exists
-    if (widget.invoiceId != null) {
+    if (activeInvoiceId != null) {
       try {
-        await _loadPaymentLines(company.id, widget.invoiceId!);
+        await _loadPaymentLines(company.id, activeInvoiceId);
         print('After loading payment lines: ${_paymentLines.length}');
         // Convert payment lines to the format expected by the generator
         for (final paymentLine in _paymentLines) {

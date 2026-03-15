@@ -3,15 +3,16 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:isar/isar.dart';
-import 'package:matrix_accounts/data/models/inventory_models.dart' show Product;
-import 'package:matrix_accounts/features/sales/logic/sales_providers.dart'
+import 'package:veyo_sync/data/models/inventory_models.dart' show Product;
+import 'package:veyo_sync/features/sales/logic/sales_providers.dart'
     show salesDaoProvider;
+
 import '../../../core/config/providers.dart';
 import '../../../core/widgets/navigation_drawer_helper.dart';
-import '../../../data/models/transaction_model.dart';
-import '../../../data/models/party_model.dart';
 import '../../../data/models/account_models.dart' as account_models;
 import '../../../data/models/invoice_stock_models.dart';
+import '../../../data/models/party_model.dart';
+import '../../../data/models/transaction_model.dart';
 
 class DaybookScreen extends ConsumerStatefulWidget {
   const DaybookScreen({super.key});

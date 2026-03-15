@@ -13,6 +13,7 @@ import '../../data/models/party_model.dart';
 import '../../data/models/payment_models.dart';
 import '../../data/models/sync_change_model.dart';
 import '../../data/models/transaction_model.dart' as tm;
+import '../../data/models/user_model.dart';
 import '../database/isar_service.dart';
 import 'api_client.dart';
 
@@ -29,6 +30,9 @@ class SyncService {
 
   Isar get _isar => isarService.isar;
   static const String _companySyncVersionPrefix = 'last_sync_version_company_';
+  static const String _legacySyncVersionKey = 'last_sync_version';
+  static const String _appliedOpUuidsPrefix = 'applied_op_uuids_company_';
+  static const int _maxStoredAppliedOpUuids = 1000;
 
   void _logSyncDebug(String message) {
     if (kDebugMode) {
@@ -46,15 +50,73 @@ class SyncService {
   }
 
   int _getLastSyncVersionForCompany(int companyId) {
-    return prefs.getInt('$_companySyncVersionPrefix$companyId') ?? 0;
+    final companyKey = '$_companySyncVersionPrefix$companyId';
+    final companyVersion = prefs.getInt(companyKey);
+    if (companyVersion != null) {
+      return companyVersion;
+    }
+
+    final legacyVersion = prefs.getInt(_legacySyncVersionKey);
+    if (legacyVersion != null) {
+      prefs.setInt(companyKey, legacyVersion);
+      return legacyVersion;
+    }
+
+    return 0;
   }
 
   int getLastSyncVersionForCompany(int companyId) {
     return _getLastSyncVersionForCompany(companyId);
   }
 
-  Future<void> _setLastSyncVersionForCompany(int companyId, int version) async {
-    await prefs.setInt('$_companySyncVersionPrefix$companyId', version);
+  Future<void> _setLastSyncVersionForCompany(
+    int companyId,
+    int version, {
+    bool allowRollback = false,
+  }) async {
+    final safeVersion = version < 0 ? 0 : version;
+    final key = '$_companySyncVersionPrefix$companyId';
+    final existingVersion = prefs.getInt(key) ?? 0;
+
+    if (!allowRollback && safeVersion < existingVersion) {
+      _logSyncDebug(
+        'cursor:ignore-rollback companyId=$companyId existing=$existingVersion requested=$safeVersion',
+      );
+      return;
+    }
+
+    await prefs.setInt(key, safeVersion);
+  }
+
+  Set<String> _getAppliedOpUuidsForCompany(int companyId) {
+    return prefs.getStringList('$_appliedOpUuidsPrefix$companyId')?.toSet() ??
+        <String>{};
+  }
+
+  Future<void> _rememberAppliedOpUuidsForCompany(
+    int companyId,
+    Iterable<String> uuids,
+  ) async {
+    final newUuids = uuids.where((uuid) => uuid.trim().isNotEmpty).toList();
+    if (newUuids.isEmpty) return;
+
+    final existing =
+        prefs.getStringList('$_appliedOpUuidsPrefix$companyId')?.toList() ??
+            <String>[];
+
+    final merged = <String>[...existing, ...newUuids];
+    if (merged.length > _maxStoredAppliedOpUuids) {
+      final start = merged.length - _maxStoredAppliedOpUuids;
+      await prefs.setStringList(
+          '$_appliedOpUuidsPrefix$companyId', merged.sublist(start));
+      return;
+    }
+
+    await prefs.setStringList('$_appliedOpUuidsPrefix$companyId', merged);
+  }
+
+  bool _isGlobalTable(String table) {
+    return table == 'units_of_measure' || table == 'item_categories';
   }
 
   // ──────────────────────────────────────────────────────────────────────────
@@ -98,7 +160,11 @@ class SyncService {
             debugPrint(
               '[Sync] apply failed at version $lastVersion for company=$companyId; retrying with full resync from version 0. Error: $e',
             );
-            await _setLastSyncVersionForCompany(companyId, 0);
+            await _setLastSyncVersionForCompany(
+              companyId,
+              0,
+              allowRollback: true,
+            );
             return pullChanges(
               companyId: companyId,
               serverCompanyId: serverCompanyId,
@@ -377,11 +443,17 @@ class SyncService {
       );
     }
 
+    final pushedVersion = pushResult.currentVersion;
+    if (pushedVersion != null) {
+      await _setLastSyncVersionForCompany(companyId, pushedVersion);
+    }
+
     // Pull again so this device immediately receives any changes that happened
     // during the same sync window (including updates from other devices).
     final pullAfterPush = await pullChanges(
       companyId: companyId,
       serverCompanyId: serverCompanyId,
+      lastVersionOverride: pushedVersion,
     );
 
     if (!pullAfterPush.success) {
@@ -408,38 +480,14 @@ class SyncService {
   }
 
   /// Ensure we have a valid server auth token.
-  /// If missing, attempts automatic login using stored server credentials.
+  /// Token-first session model: if the token is missing, caller must send user
+  /// back through interactive login or a future refresh-token flow.
   Future<bool> ensureServerToken() async {
     if (apiClient.token != null && apiClient.token!.isNotEmpty) {
       return true;
     }
 
-    final email =
-        prefs.getString('server_email') ?? prefs.getString('user_email');
-    final password = prefs.getString('server_password');
-    if (email == null ||
-        email.isEmpty ||
-        password == null ||
-        password.isEmpty) {
-      return false;
-    }
-
-    try {
-      final response = await apiClient.post('/api/auth/login', {
-        'email': email,
-        'password': password,
-        'device_id': deviceId,
-      }).timeout(const Duration(seconds: 8));
-
-      if (response['success'] == true && response['token'] != null) {
-        await prefs.setString('auth_token', response['token'].toString());
-        await prefs.setString('server_email', email);
-        return true;
-      }
-      return false;
-    } catch (_) {
-      return false;
-    }
+    return false;
   }
 
   /// Attempt token refresh + data sync for all active local companies.
@@ -602,46 +650,90 @@ class SyncService {
   Future<void> _applyChanges(List<dynamic> changes,
       {int? localCompanyId}) async {
     final parsedChanges = <_ParsedSyncChange>[];
+    final rememberedAppliedOpUuids = localCompanyId != null
+        ? _getAppliedOpUuidsForCompany(localCompanyId)
+        : <String>{};
+    final seenOpUuidsInBatch = <String>{};
 
     for (final raw in changes) {
       Map<String, dynamic> change;
       try {
-        change = raw as Map<String, dynamic>;
+        if (raw is Map) {
+          change = Map<String, dynamic>.from(raw);
+        } else {
+          continue;
+        }
       } catch (_) {
         continue; // skip if top-level change is not a map
       }
 
-      final table = change['table'] as String;
-      final operation = change['operation'] as String;
+      final table = change['table']?.toString();
+      final operation = change['operation']?.toString();
+      if (table == null ||
+          table.isEmpty ||
+          operation == null ||
+          operation.isEmpty) {
+        _logSyncDebug('apply:skip invalid metadata change=$change');
+        continue;
+      }
+
+      final opUuidRaw = change['op_uuid']?.toString();
+      final opUuid = (opUuidRaw != null && opUuidRaw.trim().isNotEmpty)
+          ? opUuidRaw.trim()
+          : null;
+      if (opUuid != null) {
+        if (rememberedAppliedOpUuids.contains(opUuid) ||
+            !seenOpUuidsInBatch.add(opUuid)) {
+          _logSyncDebug('apply:skip duplicate op_uuid=$opUuid table=$table');
+          continue;
+        }
+      }
+
       final recordId = _asInt(change['record_id']);
 
       // Deep copy data and remap server company_id → local company_id
       Map<String, dynamic> data;
       try {
-        final rawData = change['data'];
+        final rawData = change['data'] ?? change['payload'] ?? change['record'];
         if (rawData is String) {
           final decoded = jsonDecode(rawData);
-          if (decoded is! Map<String, dynamic>) {
-            throw FormatException(
-              '[Sync] Invalid change payload for $table#$recordId: decoded string is not a map',
-            );
+          if (decoded is Map) {
+            data = Map<String, dynamic>.from(decoded);
+          } else {
+            _logSyncDebug(
+                'apply:skip non-map decoded payload table=$table id=$recordId');
+            continue;
           }
-          data = Map<String, dynamic>.from(decoded);
         } else if (rawData is Map) {
           data = Map<String, dynamic>.from(rawData);
+        } else if (rawData == null && _isGlobalTable(table)) {
+          data = Map<String, dynamic>.from(change)
+            ..remove('table')
+            ..remove('operation')
+            ..remove('record_id')
+            ..remove('version')
+            ..remove('timestamp')
+            ..remove('op_uuid')
+            ..remove('data')
+            ..remove('payload')
+            ..remove('record');
         } else {
-          throw FormatException(
-            '[Sync] Invalid change payload for $table#$recordId: unexpected data type ${rawData.runtimeType}',
-          );
+          _logSyncDebug(
+              'apply:skip invalid payload type table=$table id=$recordId type=${rawData.runtimeType}');
+          continue;
         }
       } catch (e) {
-        throw FormatException(
-          '[Sync] Failed to parse change data for $table#$recordId: $e',
-        );
+        _logSyncDebug(
+            'apply:skip parse failure table=$table id=$recordId error=$e');
+        continue;
       }
 
       if (localCompanyId != null && data.containsKey('company_id')) {
         data['company_id'] = localCompanyId;
+      }
+
+      if (data['id'] == null && recordId > 0) {
+        data['id'] = recordId;
       }
 
       parsedChanges.add(_ParsedSyncChange(
@@ -649,6 +741,7 @@ class SyncService {
         operation: operation,
         recordId: recordId,
         data: data,
+        opUuid: opUuid,
       ));
     }
 
@@ -701,6 +794,12 @@ class SyncService {
             case 'item_categories':
               await _applyItemCategoryChange(
                   change.operation, change.data, change.recordId);
+            case 'users':
+              await _applyUserChange(
+                  change.operation, change.data, change.recordId);
+            case 'company_users':
+              await _applyCompanyUserChange(
+                  change.operation, change.data, change.recordId);
             default:
               break; // ignore unknown tables
           }
@@ -711,6 +810,13 @@ class SyncService {
         }
       }
     });
+
+    if (localCompanyId != null) {
+      await _rememberAppliedOpUuidsForCompany(
+        localCompanyId,
+        parsedChanges.map((change) => change.opUuid).whereType<String>(),
+      );
+    }
   }
 
   // ── Helpers ───────────────────────────────────────────────────────────────
@@ -1024,10 +1130,26 @@ class SyncService {
       await _isar.unitOfMeasures.delete(id);
       return;
     }
+
+    final resolvedId = _asInt(d['id'], fallback: id);
+    if (resolvedId <= 0) {
+      _logSyncDebug('applyUom:skip invalid id payload=$d');
+      return;
+    }
+
+    final name = d['name']?.toString() ?? '';
+    final abbrev =
+        d['abbrev']?.toString() ?? d['abbreviation']?.toString() ?? '';
+    if (name.trim().isEmpty || abbrev.trim().isEmpty) {
+      _logSyncDebug(
+          'applyUom:skip incomplete payload id=$resolvedId payload=$d');
+      return;
+    }
+
     final uom = UnitOfMeasure()
-      ..id = d['id'] as int
-      ..name = d['name'] as String
-      ..abbrev = d['abbrev'] as String;
+      ..id = resolvedId
+      ..name = name
+      ..abbrev = abbrev;
     await _isar.unitOfMeasures.put(uom);
   }
 
@@ -1066,12 +1188,80 @@ class SyncService {
       await _isar.itemCategorys.delete(id);
       return;
     }
+
+    final resolvedId = _asInt(d['id'], fallback: id);
+    if (resolvedId <= 0) {
+      _logSyncDebug('applyItemCategory:skip invalid id payload=$d');
+      return;
+    }
+
+    final name = d['name']?.toString() ?? '';
+    if (name.trim().isEmpty) {
+      _logSyncDebug(
+          'applyItemCategory:skip missing name id=$resolvedId payload=$d');
+      return;
+    }
+
     final cat = ItemCategory()
-      ..id = d['id'] as int
-      ..companyId = d['company_id'] as int
-      ..name = d['name'] as String
-      ..parentCategoryId = d['parent_category_id'] as int?;
+      ..id = resolvedId
+      ..companyId = _asInt(d['company_id'])
+      ..name = name
+      ..parentCategoryId = _asInt(d['parent_category_id'], fallback: -1) <= -1
+          ? null
+          : _asInt(d['parent_category_id']);
     await _isar.itemCategorys.put(cat);
+  }
+
+  Future<void> _applyUserChange(
+      String op, Map<String, dynamic> d, int id) async {
+    if (op == 'DELETE') {
+      await _isar.users.delete(id);
+      return;
+    }
+
+    final user = User()
+      ..id = _asInt(d['id'], fallback: id)
+      ..email = d['email']?.toString() ?? ''
+      ..fullName = d['full_name']?.toString() ?? d['name']?.toString() ?? ''
+      ..passwordHash = d['password']?.toString() ?? ''
+      ..isActive = _asBool(d['is_active'])
+      ..createdAt = _asDate(d['created_at']);
+
+    if (user.id <= 0 ||
+        user.email.trim().isEmpty ||
+        user.fullName.trim().isEmpty) {
+      _logSyncDebug('applyUser:skip invalid payload id=$id payload=$d');
+      return;
+    }
+
+    await _isar.users.put(user);
+  }
+
+  Future<void> _applyCompanyUserChange(
+      String op, Map<String, dynamic> d, int id) async {
+    if (op == 'DELETE') {
+      await _isar.companyUsers.delete(id);
+      return;
+    }
+
+    final mapping = CompanyUser()
+      ..id = _asInt(d['id'], fallback: id)
+      ..companyId = _asInt(d['company_id'])
+      ..userId = _asInt(d['user_id'])
+      ..role = d['role']?.toString() ?? 'user'
+      ..userGroupId = _asInt(d['user_group_id'], fallback: -1)
+      ..isActive = _asBool(d['is_active']);
+
+    if (mapping.userGroupId != null && mapping.userGroupId! < 0) {
+      mapping.userGroupId = null;
+    }
+
+    if (mapping.id <= 0 || mapping.companyId <= 0 || mapping.userId <= 0) {
+      _logSyncDebug('applyCompanyUser:skip invalid payload id=$id payload=$d');
+      return;
+    }
+
+    await _isar.companyUsers.put(mapping);
   }
 
   // ──────────────────────────────────────────────────────────────────────────
@@ -1164,11 +1354,13 @@ class _ParsedSyncChange {
   final String operation;
   final int recordId;
   final Map<String, dynamic> data;
+  final String? opUuid;
 
   _ParsedSyncChange({
     required this.table,
     required this.operation,
     required this.recordId,
     required this.data,
+    this.opUuid,
   });
 }

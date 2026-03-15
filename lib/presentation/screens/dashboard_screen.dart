@@ -2,24 +2,24 @@
 
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:matrix_accounts/features/expenses/presentation/expense_list_screen.dart';
-import 'package:matrix_accounts/features/inventory/presentation/product_list_screen.dart';
-import 'package:matrix_accounts/features/parties/presentation/party_list_screen.dart';
-import 'package:matrix_accounts/features/payments/presentation/payment_in_list_screen.dart';
-import 'package:matrix_accounts/features/payments/presentation/payment_out_list_screen.dart';
-import 'package:matrix_accounts/features/purchases/presentation/purchase_invoice_form_screen.dart';
-import 'package:matrix_accounts/features/purchases/presentation/purchase_invoice_list_screen.dart';
-import 'package:matrix_accounts/features/purchases/purchase_report.dart';
-import 'package:matrix_accounts/features/reports/presentation/cashflow_screen.dart';
-import 'package:matrix_accounts/features/reports/presentation/daybook_screen.dart'
+import 'package:veyo_sync/features/expenses/presentation/expense_list_screen.dart';
+import 'package:veyo_sync/features/inventory/presentation/product_list_screen.dart';
+import 'package:veyo_sync/features/parties/presentation/party_list_screen.dart';
+import 'package:veyo_sync/features/payments/presentation/payment_in_list_screen.dart';
+import 'package:veyo_sync/features/payments/presentation/payment_out_list_screen.dart';
+import 'package:veyo_sync/features/purchases/presentation/purchase_invoice_form_screen.dart';
+import 'package:veyo_sync/features/purchases/presentation/purchase_invoice_list_screen.dart';
+import 'package:veyo_sync/features/purchases/purchase_report.dart';
+import 'package:veyo_sync/features/reports/presentation/cashflow_screen.dart';
+import 'package:veyo_sync/features/reports/presentation/daybook_screen.dart'
     show DaybookScreen;
-import 'package:matrix_accounts/features/reports/presentation/stock_report_screen.dart';
-import 'package:matrix_accounts/features/reports/sale_report.dart'
+import 'package:veyo_sync/features/reports/presentation/stock_report_screen.dart';
+import 'package:veyo_sync/features/reports/sale_report.dart'
     show SaleReportScreen;
-import 'package:matrix_accounts/features/sales/presentation/sale_invoice_list_screen.dart';
-import 'package:matrix_accounts/features/sales/presentation/sales_invoice_form_screen.dart';
-import 'package:matrix_accounts/features/sync/sync_screen.dart';
-import 'package:matrix_accounts/settings/settings_screen.dart';
+import 'package:veyo_sync/features/sales/presentation/sale_invoice_list_screen.dart';
+import 'package:veyo_sync/features/sales/presentation/sales_invoice_form_screen.dart';
+import 'package:veyo_sync/features/sync/sync_screen.dart';
+import 'package:veyo_sync/settings/settings_screen.dart';
 
 import '../../core/config/providers.dart';
 import '../../core/widgets/connectivity_banner.dart';
@@ -33,10 +33,6 @@ class DashboardScreen extends ConsumerWidget {
 
   bool _isTablet(BuildContext context) {
     return MediaQuery.of(context).size.width > 600;
-  }
-
-  bool _isLandscape(BuildContext context) {
-    return MediaQuery.of(context).orientation == Orientation.landscape;
   }
 
   bool _shouldShowBottomNav(BuildContext context) {

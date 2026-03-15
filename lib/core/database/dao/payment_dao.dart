@@ -17,30 +17,76 @@ class PaymentDao {
 
   // Payment Account Methods
   Future<void> createDefaultAccounts(int companyId) async {
-    final existingCash = await isar.paymentAccounts
+    final existingDefaultCash = await isar.paymentAccounts
         .filter()
         .companyIdEqualTo(companyId)
         .accountTypeEqualTo(PaymentAccountType.cash)
         .isDefaultEqualTo(true)
         .findFirst();
 
-    if (existingCash == null) {
-      await isar.writeTxn(() async {
-        // Create Cash account
-        final cash = PaymentAccount()
-          ..companyId = companyId
-          ..accountType = PaymentAccountType.cash
-          ..accountName = 'Cash'
-          ..icon = '💵'
-          ..isActive = true
-          ..isDefault = true
-          ..createdAt = DateTime.now();
-        await isar.paymentAccounts.put(cash);
-      });
+    if (existingDefaultCash != null) {
+      if (!existingDefaultCash.isActive) {
+        await isar.writeTxn(() async {
+          existingDefaultCash.isActive = true;
+          existingDefaultCash.updatedAt = DateTime.now();
+          await isar.paymentAccounts.put(existingDefaultCash);
+        });
+      }
+      return;
     }
+
+    final activeCashAccount = await isar.paymentAccounts
+        .filter()
+        .companyIdEqualTo(companyId)
+        .accountTypeEqualTo(PaymentAccountType.cash)
+        .isActiveEqualTo(true)
+        .findFirst();
+
+    await isar.writeTxn(() async {
+      if (activeCashAccount != null) {
+        activeCashAccount.isDefault = true;
+        activeCashAccount.updatedAt = DateTime.now();
+        await isar.paymentAccounts.put(activeCashAccount);
+        return;
+      }
+
+      final cash = PaymentAccount()
+        ..companyId = companyId
+        ..accountType = PaymentAccountType.cash
+        ..accountName = 'Cash'
+        ..icon = '💵'
+        ..isActive = true
+        ..isDefault = true
+        ..createdAt = DateTime.now();
+
+      final cashId = await isar.paymentAccounts.put(cash);
+
+      await isar.syncChanges.put(SyncChange()
+        ..companyId = companyId
+        ..table = 'payment_accounts'
+        ..operation = ChangeOperation.create
+        ..recordId = cashId
+        ..data = jsonEncode({
+          'id': cashId,
+          'company_id': cash.companyId,
+          'account_type': cash.accountType.name,
+          'account_name': cash.accountName,
+          'bank_name': cash.bankName,
+          'account_number': cash.accountNumber,
+          'ifsc_code': cash.ifscCode,
+          'icon': cash.icon,
+          'is_active': cash.isActive,
+          'is_default': cash.isDefault,
+          'created_at': cash.createdAt.toIso8601String(),
+        })
+        ..createdAt = DateTime.now()
+        ..synced = false);
+    });
   }
 
   Future<List<PaymentAccount>> getPaymentAccounts(int companyId) async {
+    await createDefaultAccounts(companyId);
+
     return await isar.paymentAccounts
         .filter()
         .companyIdEqualTo(companyId)

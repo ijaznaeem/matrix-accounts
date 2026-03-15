@@ -460,62 +460,6 @@ class InvoiceGenerator {
           ? invoice.paidAmount
           : _calculateTotalPaid(paymentLines);
 
-      // Customer Opening Balance - Separate Section
-      if (openingBalance != null) {
-        // Section title
-        _drawText(
-            canvas,
-            'Customer Opening Balance',
-            Offset(40, yPos),
-            const TextStyle(
-                fontSize: 16,
-                fontWeight: FontWeight.bold,
-                color: Colors.black));
-        yPos += 30;
-
-        // Opening balance container
-        final openingBoxPaint = Paint()
-          ..color = Colors.blue.shade50
-          ..style = PaintingStyle.fill;
-
-        canvas.drawRRect(
-          RRect.fromRectAndRadius(
-            Rect.fromLTWH(40, yPos, 720, 50),
-            const Radius.circular(6),
-          ),
-          openingBoxPaint,
-        );
-
-        final openingBorderPaint = Paint()
-          ..color = Colors.blue.shade300
-          ..style = PaintingStyle.stroke
-          ..strokeWidth = 1.5;
-
-        canvas.drawRRect(
-          RRect.fromRectAndRadius(
-            Rect.fromLTWH(40, yPos, 720, 50),
-            const Radius.circular(6),
-          ),
-          openingBorderPaint,
-        );
-
-        _drawText(canvas, 'Opening Balance:', Offset(60, yPos + 15),
-            const TextStyle(fontSize: 14, color: Colors.black87));
-
-        _drawText(
-            canvas,
-            openingBalance >= 0
-                ? 'Credit: Rs ${_currencyFormat.format(openingBalance.abs())}'
-                : 'Due: Rs ${_currencyFormat.format(openingBalance.abs())}',
-            Offset(500, yPos + 15),
-            const TextStyle(
-                fontSize: 14,
-                fontWeight: FontWeight.bold,
-                color: Colors.black));
-
-        yPos += 80; // Space after opening balance
-      }
-
       // Payment Summary - Separate Section
       _drawText(
           canvas,

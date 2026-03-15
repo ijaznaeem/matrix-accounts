@@ -30,6 +30,7 @@ Route::get('/health', function () {
 // Public auth routes
 Route::post('/auth/register', [AuthController::class, 'register']);
 Route::post('/auth/login',    [AuthController::class, 'login']);
+Route::post('/auth/refresh',  [AuthController::class, 'refresh']);
 
 // Protected routes (require Sanctum bearer token)
 Route::middleware('auth:sanctum')->group(function () {
@@ -37,6 +38,7 @@ Route::middleware('auth:sanctum')->group(function () {
     // ── Auth ──────────────────────────────────────────
     Route::post('/auth/logout', [AuthController::class, 'logout']);
     Route::get('/auth/user',    [AuthController::class, 'user']);
+    Route::post('/auth/change-password', [AuthController::class, 'changePassword']);
 
     // ── Companies ─────────────────────────────────────
     Route::get('/companies',  [CompanyController::class, 'index']);

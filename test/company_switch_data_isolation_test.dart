@@ -1,14 +1,14 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:isar/isar.dart';
-import 'package:matrix_accounts/core/config/providers.dart';
-import 'package:matrix_accounts/core/database/dao/party_dao.dart';
-import 'package:matrix_accounts/core/database/dao/product_master_dao.dart';
-import 'package:matrix_accounts/data/models/company_model.dart';
-import 'package:matrix_accounts/data/models/inventory_models.dart';
-import 'package:matrix_accounts/data/models/party_model.dart';
-import 'package:matrix_accounts/features/inventory/logic/product_master_provider.dart';
-import 'package:matrix_accounts/features/parties/logic/party_provider.dart';
+import 'package:veyo_sync/core/config/providers.dart';
+import 'package:veyo_sync/core/database/dao/party_dao.dart';
+import 'package:veyo_sync/core/database/dao/product_master_dao.dart';
+import 'package:veyo_sync/data/models/company_model.dart';
+import 'package:veyo_sync/data/models/inventory_models.dart';
+import 'package:veyo_sync/data/models/party_model.dart';
+import 'package:veyo_sync/features/inventory/logic/product_master_provider.dart';
+import 'package:veyo_sync/features/parties/logic/party_provider.dart';
 
 class _FakeProductMasterDao implements ProductMasterDao {
   _FakeProductMasterDao({

@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+
 import '../../../core/services/whatsapp_service.dart';
 
 /// Quick WhatsApp test screen for immediate testing
@@ -39,7 +40,8 @@ class _WhatsAppQuickTestScreenState extends State<WhatsAppQuickTestScreen> {
                 padding: const EdgeInsets.all(16),
                 child: Column(
                   children: [
-                    Icon(Icons.check_circle, color: Colors.green, size: 48),
+                    const Icon(Icons.check_circle,
+                        color: Colors.green, size: 48),
                     const SizedBox(height: 8),
                     Text(
                       'WhatsApp Integration Ready!',
@@ -145,7 +147,7 @@ class _WhatsAppQuickTestScreenState extends State<WhatsAppQuickTestScreen> {
                   children: [
                     Row(
                       children: [
-                        Icon(Icons.info, color: Colors.blue),
+                        const Icon(Icons.info, color: Colors.blue),
                         const SizedBox(width: 8),
                         Text(
                           'Testing Instructions',

@@ -5,11 +5,14 @@ import 'dart:typed_data';
 import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
+import 'package:http/http.dart' as http;
 import 'package:intl/intl.dart';
+import 'package:isar/isar.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:share_plus/share_plus.dart';
 
 import '../../../data/models/company_model.dart';
+import '../../../data/models/inventory_models.dart';
 import '../../../data/models/invoice_stock_models.dart';
 import '../../../data/models/party_model.dart';
 import '../../../data/models/transaction_model.dart';
@@ -29,6 +32,8 @@ class PurchaseInvoiceGenerator {
     List<Map<String, dynamic>>? paymentLines,
     double? supplierBalance,
     double? openingBalance,
+    String? notes,
+    String? attachmentImagePath,
   }) async {
     try {
       // Debug: Print opening balance parameter
@@ -37,20 +42,65 @@ class PurchaseInvoiceGenerator {
       print('supplierBalance parameter: $supplierBalance');
       print('======================================');
 
+      // ── Pre-load attachment image and calculate dynamic canvas height ─────
+      ui.Image? attachmentUiImage;
+      if (attachmentImagePath != null && attachmentImagePath.isNotEmpty) {
+        try {
+          Uint8List? attachBytes;
+          final lowerPath = attachmentImagePath.toLowerCase();
+          final isRemote = lowerPath.startsWith('http://') ||
+              lowerPath.startsWith('https://');
+
+          if (isRemote) {
+            final response = await http.get(Uri.parse(attachmentImagePath));
+            if (response.statusCode >= 200 && response.statusCode < 300) {
+              attachBytes = response.bodyBytes;
+            }
+          } else {
+            final attachFile = File(attachmentImagePath);
+            if (await attachFile.exists()) {
+              attachBytes = await attachFile.readAsBytes();
+            }
+          }
+
+          if (attachBytes != null && attachBytes.isNotEmpty) {
+            final codec = await ui.instantiateImageCodec(attachBytes);
+            final frame = await codec.getNextFrame();
+            attachmentUiImage = frame.image;
+          }
+        } catch (e) {
+          print('Warning: could not load attachment image: $e');
+        }
+      }
+
+      double extraCanvasHeight = 0;
+      if (notes != null && notes.isNotEmpty) {
+        final estimatedLines = (notes.length / 70).ceil().clamp(1, 30);
+        extraCanvasHeight += 60.0 + (estimatedLines * 24.0);
+      }
+      if (attachmentUiImage != null) {
+        final scaleFactor = 720.0 / attachmentUiImage.width;
+        final scaledH =
+            (attachmentUiImage.height * scaleFactor).clamp(0.0, 500.0);
+        extraCanvasHeight += scaledH + 80.0;
+      }
+
       final recorder = ui.PictureRecorder();
       final canvas = Canvas(recorder);
-      const size = Size(800, 1400);
+      final canvasWidth = 800.0;
+      final canvasHeight = 1400.0 + extraCanvasHeight;
 
       // Background - use a slightly off-white background for better contrast
       final paint = Paint()..color = const Color(0xFFFAFAFA);
-      canvas.drawRect(Rect.fromLTWH(0, 0, size.width, size.height), paint);
+      canvas.drawRect(Rect.fromLTWH(0, 0, canvasWidth, canvasHeight), paint);
 
       // Add a border
       final borderPaint = Paint()
         ..color = Colors.grey.shade300
         ..style = PaintingStyle.stroke
         ..strokeWidth = 2;
-      canvas.drawRect(Rect.fromLTWH(10, 10, size.width - 20, size.height - 20),
+      canvas.drawRect(
+          Rect.fromLTWH(10, 10, canvasWidth - 20, canvasHeight - 20),
           borderPaint);
 
       // Header - Company name
@@ -322,70 +372,15 @@ class PurchaseInvoiceGenerator {
 
       yPos += 120;
 
-      // Supplier Opening Balance - Separate Section with improved styling
-      if (openingBalance != null) {
-        print('Rendering purchase opening balance: $openingBalance');
-
-        // Section title
-        _drawText(
-            canvas,
-            'Supplier Opening Balance',
-            Offset(40, yPos),
-            const TextStyle(
-                fontSize: 16,
-                fontWeight: FontWeight.bold,
-                color: Colors.black));
-        yPos += 30;
-
-        // Opening balance container with orange theme to match purchase invoice
-        final openingBalanceBoxPaint = Paint()
-          ..color = Colors.orange.shade50
-          ..style = PaintingStyle.fill;
-
-        canvas.drawRRect(
-          RRect.fromRectAndRadius(
-            Rect.fromLTWH(40, yPos, 720, 50),
-            const Radius.circular(6),
-          ),
-          openingBalanceBoxPaint,
-        );
-
-        final openingBalanceBorderPaint = Paint()
-          ..color = Colors.orange.shade300
-          ..style = PaintingStyle.stroke
-          ..strokeWidth = 1.5;
-
-        canvas.drawRRect(
-          RRect.fromRectAndRadius(
-            Rect.fromLTWH(40, yPos, 720, 50),
-            const Radius.circular(6),
-          ),
-          openingBalanceBorderPaint,
-        );
-
-        _drawText(canvas, 'Opening Balance:', Offset(60, yPos + 15),
-            const TextStyle(fontSize: 14, color: Colors.black87));
-
-        _drawText(
-            canvas,
-            openingBalance >= 0
-                ? 'We Owe: Rs ${_currencyFormat.format(openingBalance.abs())}'
-                : 'They Owe: Rs ${_currencyFormat.format(openingBalance.abs())}',
-            Offset(500, yPos + 15),
-            const TextStyle(
-                fontSize: 14,
-                fontWeight: FontWeight.bold,
-                color: Colors.black));
-
-        yPos += 80; // More space after opening balance
-      }
-
-      // Always show Payment Summary section
-      double totalPaid = 0;
-      if (paymentLines != null && paymentLines.isNotEmpty) {
-        totalPaid = paymentLines.fold(
-            0.0, (sum, p) => sum + (p['amount'] as double? ?? 0));
-      }
+      // Always show Payment Summary section using the balance snapshot saved on invoice
+      final previousBalance = invoice.previousBalance;
+      final totalPaid = invoice.paidAmount > 0
+          ? invoice.paidAmount
+          : (paymentLines?.fold<double>(
+                  0.0,
+                  (sum, p) =>
+                      sum + ((p['amount'] as num?)?.toDouble() ?? 0.0)) ??
+              0.0);
 
       // Payment Summary - Clean Simple Design
       _drawText(
@@ -403,7 +398,7 @@ class PurchaseInvoiceGenerator {
 
       canvas.drawRRect(
         RRect.fromRectAndRadius(
-          Rect.fromLTWH(40, yPos, 720, 120),
+          Rect.fromLTWH(40, yPos, 720, 150),
           const Radius.circular(4),
         ),
         summaryBoxPaint,
@@ -416,7 +411,7 @@ class PurchaseInvoiceGenerator {
 
       canvas.drawRRect(
         RRect.fromRectAndRadius(
-          Rect.fromLTWH(40, yPos, 720, 120),
+          Rect.fromLTWH(40, yPos, 720, 150),
           const Radius.circular(4),
         ),
         summaryBorderPaint,
@@ -430,6 +425,16 @@ class PurchaseInvoiceGenerator {
 
       print(
           'GENERATOR: Database total: ${invoice.grandTotal}, Calculated total: $calculatedSubTotal, Using: $totalToDisplay');
+
+      // Previous Balance
+      _drawText(canvas, 'Previous Balance:', Offset(60, yPos),
+          const TextStyle(fontSize: 14, color: Colors.black87));
+      _drawText(
+          canvas,
+          'Rs ${_currencyFormat.format(previousBalance)}',
+          Offset(600, yPos),
+          const TextStyle(fontSize: 14, color: Colors.black87));
+      yPos += 25;
 
       // Total Amount - simple styling
       _drawText(canvas, 'Total Amount:', Offset(60, yPos),
@@ -452,16 +457,20 @@ class PurchaseInvoiceGenerator {
           const TextStyle(fontSize: 14, color: Colors.black));
       yPos += 25;
 
-      // Balance Amount - simple styling
-      final due = totalToDisplay - totalPaid;
-      _drawText(canvas, 'Balance Amount:', Offset(60, yPos),
+      // Closing Balance
+      final closingBalance = invoice.remainingBalance;
+      _drawText(canvas, 'Closing Balance:', Offset(60, yPos),
           const TextStyle(fontSize: 14, color: Colors.black87));
       _drawText(
           canvas,
-          due > 0 ? 'Rs ${_currencyFormat.format(due)}' : 'FULLY PAID',
+          closingBalance > 0
+              ? 'Rs ${_currencyFormat.format(closingBalance)}'
+              : 'CLEARED',
           Offset(600, yPos),
-          const TextStyle(
-              fontSize: 14, fontWeight: FontWeight.bold, color: Colors.black));
+          TextStyle(
+              fontSize: 14,
+              fontWeight: FontWeight.bold,
+              color: closingBalance > 0 ? Colors.red : Colors.green));
 
       // Supplier Current Balance - Clean Design
       if (supplierBalance != null) {
@@ -508,9 +517,85 @@ class PurchaseInvoiceGenerator {
                 color: Colors.black));
       }
 
+      // ── Notes section ─────────────────────────────────────────────────────
+      if (notes != null && notes.isNotEmpty) {
+        yPos += 20;
+        _drawText(
+          canvas,
+          'Notes',
+          Offset(40, yPos),
+          const TextStyle(
+              fontSize: 16, fontWeight: FontWeight.bold, color: Colors.black87),
+        );
+        yPos += 28;
+
+        final notesSpan = TextSpan(
+          text: notes,
+          style: const TextStyle(fontSize: 13, color: Colors.black87),
+        );
+        final notesPainter = TextPainter(
+          text: notesSpan,
+          textDirection: ui.TextDirection.ltr,
+          textAlign: TextAlign.left,
+        );
+        notesPainter.layout(minWidth: 0, maxWidth: 680);
+        final notesBoxH = notesPainter.height + 24;
+
+        final notesBgPaint = Paint()
+          ..color = const Color(0xFFFFF8E1) // amber-50
+          ..style = PaintingStyle.fill;
+        canvas.drawRRect(
+          RRect.fromRectAndRadius(Rect.fromLTWH(40, yPos, 720, notesBoxH),
+              const Radius.circular(6)),
+          notesBgPaint,
+        );
+        final notesBorderPaint = Paint()
+          ..color = const Color(0xFFFFD54F) // amber-300
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = 1;
+        canvas.drawRRect(
+          RRect.fromRectAndRadius(Rect.fromLTWH(40, yPos, 720, notesBoxH),
+              const Radius.circular(6)),
+          notesBorderPaint,
+        );
+        notesPainter.paint(canvas, Offset(52, yPos + 12));
+        yPos += notesBoxH + 24;
+      }
+
+      // ── Attachment image section ───────────────────────────────────────────
+      if (attachmentUiImage != null) {
+        _drawText(
+          canvas,
+          'Attachment',
+          Offset(40, yPos),
+          const TextStyle(
+              fontSize: 16, fontWeight: FontWeight.bold, color: Colors.black87),
+        );
+        yPos += 28;
+
+        final scaleFactor = 720.0 / attachmentUiImage.width;
+        final scaledW = 720.0;
+        final scaledH =
+            (attachmentUiImage.height * scaleFactor).clamp(0.0, 500.0);
+
+        final imgBorderPaint = Paint()
+          ..color = Colors.grey.shade400
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = 1;
+        canvas.drawRect(
+            Rect.fromLTWH(40, yPos, scaledW, scaledH), imgBorderPaint);
+
+        final srcRect = Rect.fromLTWH(0, 0, attachmentUiImage.width.toDouble(),
+            attachmentUiImage.height.toDouble());
+        final dstRect = Rect.fromLTWH(40, yPos, scaledW, scaledH);
+        canvas.drawImageRect(attachmentUiImage, srcRect, dstRect, Paint());
+
+        yPos += scaledH + 24;
+      }
+
       final picture = recorder.endRecording();
       final img =
-          await picture.toImage(size.width.toInt(), size.height.toInt());
+          await picture.toImage(canvasWidth.toInt(), canvasHeight.toInt());
       final byteData = await img.toByteData(format: ui.ImageByteFormat.png);
 
       if (byteData == null) {
@@ -526,6 +611,72 @@ class PurchaseInvoiceGenerator {
     }
   }
 
+  /// Loads all purchase invoice data from [isar] and renders the PNG.
+  /// Notes and attachmentPath are read automatically from the stored Invoice.
+  static Future<Uint8List> buildImageById({
+    required int invoiceId,
+    required Isar isar,
+    required Company company,
+  }) async {
+    final invoice = await isar.invoices.get(invoiceId);
+    if (invoice == null)
+      throw Exception('Purchase Invoice #$invoiceId not found');
+
+    final supplier = await isar.partys.get(invoice.partyId);
+    if (supplier == null) throw Exception('Supplier not found');
+
+    final transaction = await isar.transactions.get(invoice.transactionId);
+    if (transaction == null) throw Exception('Transaction not found');
+
+    final transactionLines = await isar.transactionLines
+        .filter()
+        .transactionIdEqualTo(transaction.id)
+        .findAll();
+
+    final lineItems = <Map<String, dynamic>>[];
+    for (final line in transactionLines) {
+      final product = line.productId != null
+          ? await isar.products.get(line.productId!)
+          : null;
+      lineItems.add({
+        'productName': product?.name ?? 'Unknown Product',
+        'qty': line.quantity,
+        'rate': line.unitPrice,
+      });
+    }
+
+    return generatePurchaseInvoiceImage(
+      company: company,
+      supplier: supplier,
+      invoice: invoice,
+      transaction: transaction,
+      lineItems: lineItems,
+      openingBalance: invoice.previousBalance,
+      notes: invoice.notes,
+      attachmentImagePath: invoice.attachmentPath,
+    );
+  }
+
+  /// Share an existing purchase invoice as an image.
+  /// All data (including notes & attachment) is loaded from Isar automatically.
+  static Future<void> shareExistingAsImage({
+    required int invoiceId,
+    required Isar isar,
+    required Company company,
+  }) async {
+    final imageBytes = await buildImageById(
+        invoiceId: invoiceId, isar: isar, company: company);
+    final tempDir = await getTemporaryDirectory();
+    final file = File('${tempDir.path}/purchase_invoice_$invoiceId.png');
+    await file.writeAsBytes(imageBytes);
+    await Share.shareXFiles([XFile(file.path)], text: 'Purchase Invoice');
+    Future.delayed(const Duration(seconds: 30), () {
+      try {
+        if (file.existsSync()) file.deleteSync();
+      } catch (_) {}
+    });
+  }
+
   static Future<void> _shareAsImage(
     Company company,
     Party supplier,
@@ -534,8 +685,10 @@ class PurchaseInvoiceGenerator {
     List<Map<String, dynamic>> lineItems,
     List<Map<String, dynamic>>? paymentLines,
     double? supplierBalance,
-    double? openingBalance,
-  ) async {
+    double? openingBalance, [
+    String? notes,
+    String? attachmentImagePath,
+  ]) async {
     try {
       print(
           'Starting purchase invoice image generation for invoice ${transaction.referenceNo}');
@@ -550,6 +703,8 @@ class PurchaseInvoiceGenerator {
         paymentLines: paymentLines,
         supplierBalance: supplierBalance,
         openingBalance: openingBalance,
+        notes: notes,
+        attachmentImagePath: attachmentImagePath,
       );
 
       print(
@@ -586,6 +741,8 @@ class PurchaseInvoiceGenerator {
     List<Map<String, dynamic>>? paymentLines,
     double? supplierBalance,
     double? openingBalance,
+    String? notes,
+    String? attachmentImagePath,
   }) async {
     showDialog(
       context: context,
@@ -619,7 +776,9 @@ class PurchaseInvoiceGenerator {
                         lineItems,
                         paymentLines,
                         supplierBalance,
-                        openingBalance);
+                        openingBalance,
+                        notes,
+                        attachmentImagePath);
                   },
                 ),
               ],
@@ -640,9 +799,20 @@ class PurchaseInvoiceGenerator {
     List<Map<String, dynamic>>? paymentLines,
     double? supplierBalance,
     double? openingBalance,
+    String? notes,
+    String? attachmentImagePath,
   }) async {
-    await _shareAsImage(company, supplier, invoice, transaction, lineItems,
-        paymentLines, supplierBalance, openingBalance);
+    await _shareAsImage(
+        company,
+        supplier,
+        invoice,
+        transaction,
+        lineItems,
+        paymentLines,
+        supplierBalance,
+        openingBalance,
+        notes,
+        attachmentImagePath);
   }
 
   static void _drawText(

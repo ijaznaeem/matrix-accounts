@@ -13,6 +13,8 @@ import '../utils/debug_utils.dart';
 mixin AppLifecycleMixin<T extends ConsumerStatefulWidget>
     on ConsumerState<T>, WidgetsBindingObserver {
   bool _wasInBackground = false;
+  bool _resumeAutoSyncInProgress = false;
+  DateTime? _lastResumeAutoSyncAt;
 
   @override
   void initState() {
@@ -63,18 +65,19 @@ mixin AppLifecycleMixin<T extends ConsumerStatefulWidget>
   }
 
   Future<void> _handleAppResumed(BiometricService biometricService) async {
+    final wasInBackground = _wasInBackground;
+    _wasInBackground = false;
+
     // Trigger auto-sync on resume if enabled, online, and company selected
-    if (_wasInBackground && AppConfig.autoSync) {
+    if (wasInBackground && AppConfig.autoSync) {
       _triggerAutoSyncIfNeeded();
     }
 
-    if (!_wasInBackground || !biometricService.isBiometricEnabled) {
+    if (!wasInBackground || !biometricService.isBiometricEnabled) {
       DebugUtils.logLifecycleEvent('Skipping auto-lock check',
           context: 'Not from background or biometric disabled');
       return;
     }
-
-    _wasInBackground = false;
 
     // Check if app should auto-lock
     if (biometricService.shouldAutoLock()) {
@@ -127,14 +130,50 @@ mixin AppLifecycleMixin<T extends ConsumerStatefulWidget>
 
   void _triggerAutoSyncIfNeeded() {
     try {
+      if (_resumeAutoSyncInProgress) {
+        DebugUtils.logLifecycleEvent(
+          'Auto-sync skipped on resume',
+          context: 'resume sync already in progress',
+        );
+        return;
+      }
+
+      final now = DateTime.now();
+      final lastRun = _lastResumeAutoSyncAt;
+      if (lastRun != null &&
+          now.difference(lastRun) < const Duration(seconds: 3)) {
+        DebugUtils.logLifecycleEvent(
+          'Auto-sync skipped on resume',
+          context: 'resume sync cooldown active',
+        );
+        return;
+      }
+
       final company = ref.read(currentCompanyProvider);
       final isOnline = ref.read(isOnlineProvider);
+      final syncState = ref.read(syncStateProvider);
+      if (syncState.state == SyncState.syncing) {
+        DebugUtils.logLifecycleEvent(
+          'Auto-sync skipped on resume',
+          context: 'sync already running',
+        );
+        return;
+      }
+
       if (isOnline && company != null) {
+        _resumeAutoSyncInProgress = true;
+        _lastResumeAutoSyncAt = now;
         DebugUtils.logLifecycleEvent('Auto-sync triggered on app resume');
-        ref.read(syncStateProvider.notifier).performSync(company.id);
+        ref
+            .read(syncStateProvider.notifier)
+            .performSync(company.id)
+            .whenComplete(() {
+          _resumeAutoSyncInProgress = false;
+        });
       }
     } catch (_) {
       // syncStateProvider may not be initialised yet — safe to ignore
+      _resumeAutoSyncInProgress = false;
     }
   }
 }

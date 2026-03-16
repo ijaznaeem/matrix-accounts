@@ -39,8 +39,7 @@ class _ProductListScreenState extends ConsumerState<ProductListScreen> {
             onPressed: () {
               Navigator.push(
                 context,
-                MaterialPageRoute(
-                    builder: (_) => const CategoryListScreen()),
+                MaterialPageRoute(builder: (_) => const CategoryListScreen()),
               );
             },
           ),
@@ -200,10 +199,11 @@ class _ProductListScreenState extends ConsumerState<ProductListScreen> {
                             ),
                             const SizedBox(height: 4),
                             Text(
-                              'SKU: ${product.sku}',
+                              'Stock: ${currentStock.toStringAsFixed(1)}',
                               style: TextStyle(
                                 fontSize: 12,
-                                color: Colors.grey.shade600,
+                                fontWeight: FontWeight.w500,
+                                color: _getStockColor(currentStock),
                               ),
                             ),
                           ],

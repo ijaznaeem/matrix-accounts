@@ -2,17 +2,20 @@
 
 import 'dart:async';
 import 'dart:io';
-import 'dart:typed_data';
 import 'dart:ui' as ui;
 
 import 'package:file_picker/file_picker.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:http/http.dart' as http;
 import 'package:image_picker/image_picker.dart';
 import 'package:intl/intl.dart';
+import 'package:isar/isar.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:share_plus/share_plus.dart';
 
 import '../../../data/models/company_model.dart';
+import '../../../data/models/inventory_models.dart';
 import '../../../data/models/invoice_stock_models.dart';
 import '../../../data/models/party_model.dart';
 import '../../../data/models/transaction_model.dart';
@@ -23,6 +26,12 @@ enum ShareType { general, whatsapp }
 class InvoiceGenerator {
   static final _dateFormat = DateFormat('dd MMM, yyyy hh:mm a');
   static final _currencyFormat = NumberFormat('#,##,##0.00');
+
+  static void _logDebug(String message) {
+    if (kDebugMode) {
+      debugPrint('[InvoiceGenerator] $message');
+    }
+  }
 
   // Helper method to calculate total paid amount
   static double _calculateTotalPaid(List<Map<String, dynamic>>? paymentLines) {
@@ -106,6 +115,8 @@ class InvoiceGenerator {
     List<Map<String, dynamic>>? paymentLines,
     double? customerBalance,
     double? openingBalance,
+    String? notes,
+    String? attachmentImagePath,
   }) async {
     try {
       // Debug: Print opening balance parameter
@@ -125,20 +136,85 @@ class InvoiceGenerator {
       }
       print('===============================');
 
+      // ── Pre-load attachment image and calculate dynamic canvas height ─────
+      ui.Image? attachmentUiImage;
+      if (attachmentImagePath != null && attachmentImagePath.isNotEmpty) {
+        try {
+          Uint8List? attachBytes;
+          final lowerPath = attachmentImagePath.toLowerCase();
+          final isRemote = lowerPath.startsWith('http://') ||
+              lowerPath.startsWith('https://');
+
+          _logDebug(
+            'attachment:load-start invoiceId=${invoice.id} isRemote=$isRemote path=$attachmentImagePath',
+          );
+
+          if (isRemote) {
+            final response = await http.get(Uri.parse(attachmentImagePath));
+            _logDebug(
+              'attachment:load-remote-response invoiceId=${invoice.id} status=${response.statusCode} bytes=${response.bodyBytes.length}',
+            );
+            if (response.statusCode >= 200 && response.statusCode < 300) {
+              attachBytes = response.bodyBytes;
+            }
+          } else {
+            final attachFile = File(attachmentImagePath);
+            final exists = await attachFile.exists();
+            _logDebug(
+              'attachment:load-local-check invoiceId=${invoice.id} exists=$exists path=$attachmentImagePath',
+            );
+            if (exists) {
+              attachBytes = await attachFile.readAsBytes();
+              _logDebug(
+                'attachment:load-local-bytes invoiceId=${invoice.id} bytes=${attachBytes.length}',
+              );
+            }
+          }
+
+          if (attachBytes != null && attachBytes.isNotEmpty) {
+            final codec = await ui.instantiateImageCodec(attachBytes);
+            final frame = await codec.getNextFrame();
+            attachmentUiImage = frame.image;
+            _logDebug(
+              'attachment:load-success invoiceId=${invoice.id} width=${attachmentUiImage.width} height=${attachmentUiImage.height}',
+            );
+          } else {
+            _logDebug('attachment:load-empty invoiceId=${invoice.id}');
+          }
+        } catch (e) {
+          print('Warning: could not load attachment image: $e');
+          _logDebug('attachment:load-error invoiceId=${invoice.id} error=$e');
+        }
+      }
+
+      double extraCanvasHeight = 0;
+      if (notes != null && notes.isNotEmpty) {
+        final estimatedLines = (notes.length / 70).ceil().clamp(1, 30);
+        extraCanvasHeight += 60.0 + (estimatedLines * 24.0);
+      }
+      if (attachmentUiImage != null) {
+        final scaleFactor = 720.0 / attachmentUiImage.width;
+        final scaledH =
+            (attachmentUiImage.height * scaleFactor).clamp(0.0, 500.0);
+        extraCanvasHeight += scaledH + 80.0;
+      }
+
       final recorder = ui.PictureRecorder();
       final canvas = Canvas(recorder);
-      const size = Size(800, 1400);
+      final canvasWidth = 800.0;
+      final canvasHeight = 1400.0 + extraCanvasHeight;
 
       // Background - use a slightly off-white background for better contrast
       final paint = Paint()..color = const Color(0xFFFAFAFA);
-      canvas.drawRect(Rect.fromLTWH(0, 0, size.width, size.height), paint);
+      canvas.drawRect(Rect.fromLTWH(0, 0, canvasWidth, canvasHeight), paint);
 
       // Add a border for debugging
       final borderPaint = Paint()
         ..color = Colors.grey.shade300
         ..style = PaintingStyle.stroke
         ..strokeWidth = 2;
-      canvas.drawRect(Rect.fromLTWH(10, 10, size.width - 20, size.height - 20),
+      canvas.drawRect(
+          Rect.fromLTWH(10, 10, canvasWidth - 20, canvasHeight - 20),
           borderPaint);
 
       // Header - Company name
@@ -551,11 +627,93 @@ class InvoiceGenerator {
 
       yPos += 40;
 
+      // ── Notes section ─────────────────────────────────────────────────────
+      if (notes != null && notes.isNotEmpty) {
+        // Section header
+        _drawText(
+          canvas,
+          'Notes',
+          Offset(40, yPos),
+          const TextStyle(
+              fontSize: 16, fontWeight: FontWeight.bold, color: Colors.black87),
+        );
+        yPos += 28;
+
+        // Measure the wrapped text to size the box correctly
+        final notesSpan = TextSpan(
+          text: notes,
+          style: const TextStyle(fontSize: 13, color: Colors.black87),
+        );
+        final notesPainter = TextPainter(
+          text: notesSpan,
+          textDirection: ui.TextDirection.ltr,
+          textAlign: TextAlign.left,
+        );
+        notesPainter.layout(minWidth: 0, maxWidth: 680);
+        final notesBoxH = notesPainter.height + 24;
+
+        // Background
+        final notesBgPaint = Paint()
+          ..color = const Color(0xFFFFF8E1) // amber-50
+          ..style = PaintingStyle.fill;
+        canvas.drawRRect(
+          RRect.fromRectAndRadius(Rect.fromLTWH(40, yPos, 720, notesBoxH),
+              const Radius.circular(6)),
+          notesBgPaint,
+        );
+        // Border
+        final notesBorderPaint = Paint()
+          ..color = const Color(0xFFFFD54F) // amber-300
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = 1;
+        canvas.drawRRect(
+          RRect.fromRectAndRadius(Rect.fromLTWH(40, yPos, 720, notesBoxH),
+              const Radius.circular(6)),
+          notesBorderPaint,
+        );
+        // Paint text inside box
+        notesPainter.paint(canvas, Offset(52, yPos + 12));
+        yPos += notesBoxH + 24;
+      }
+
+      // ── Attachment image section ───────────────────────────────────────────
+      if (attachmentUiImage != null) {
+        _drawText(
+          canvas,
+          'Attachment',
+          Offset(40, yPos),
+          const TextStyle(
+              fontSize: 16, fontWeight: FontWeight.bold, color: Colors.black87),
+        );
+        yPos += 28;
+
+        final scaleFactor = 720.0 / attachmentUiImage.width;
+        final scaledW = 720.0;
+        final scaledH =
+            (attachmentUiImage.height * scaleFactor).clamp(0.0, 500.0);
+
+        // Draw border around image
+        final imgBorderPaint = Paint()
+          ..color = Colors.grey.shade400
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = 1;
+        canvas.drawRect(
+            Rect.fromLTWH(40, yPos, scaledW, scaledH), imgBorderPaint);
+
+        // Draw the image scaled to fit
+        final srcRect = Rect.fromLTWH(0, 0, attachmentUiImage.width.toDouble(),
+            attachmentUiImage.height.toDouble());
+        final dstRect = Rect.fromLTWH(40, yPos, scaledW, scaledH);
+        canvas.drawImageRect(attachmentUiImage, srcRect, dstRect, Paint());
+
+        yPos += scaledH + 24;
+      }
+
       final picture = recorder.endRecording();
 
       // Increase timeout for image conversion operations - complex invoices need more time
       final img = await Future.any([
-        picture.toImage(size.width.toInt(), size.height.toInt()),
+        picture.toImage(canvasWidth.toInt(), canvasHeight.toInt()),
         Future.delayed(const Duration(seconds: 30), () {
           throw TimeoutException('Image conversion timed out');
         }),
@@ -623,6 +781,8 @@ class InvoiceGenerator {
     List<Map<String, dynamic>>? paymentLines,
     double? customerBalance,
     double? openingBalance,
+    String? notes,
+    String? attachmentImagePath,
   }) async {
     showModalBottomSheet(
       context: context,
@@ -687,6 +847,8 @@ class InvoiceGenerator {
                       paymentLines,
                       customerBalance,
                       openingBalance,
+                      notes,
+                      attachmentImagePath,
                     );
 
                     // Close loading dialog
@@ -765,6 +927,8 @@ class InvoiceGenerator {
                       paymentLines,
                       customerBalance,
                       openingBalance,
+                      notes,
+                      attachmentImagePath,
                     );
 
                     // Close loading dialog
@@ -803,6 +967,82 @@ class InvoiceGenerator {
     );
   }
 
+  /// Loads all invoice data from [isar] and renders the PNG.
+  /// Notes and attachmentPath are read automatically from the stored Invoice.
+  /// All callers simply pass invoiceId — no manual data threading required.
+  static Future<Uint8List> buildImageById({
+    required int invoiceId,
+    required Isar isar,
+    required Company company,
+  }) async {
+    _logDebug('build-by-id:start invoiceId=$invoiceId companyId=${company.id}');
+
+    final invoice = await isar.invoices.get(invoiceId);
+    if (invoice == null) throw Exception('Invoice #$invoiceId not found');
+
+    _logDebug(
+      'build-by-id:invoice-loaded invoiceId=${invoice.id} transactionId=${invoice.transactionId} attachmentPath=${invoice.attachmentPath} notesLen=${invoice.notes?.length ?? 0}',
+    );
+
+    final party = await isar.partys.get(invoice.partyId);
+    if (party == null) throw Exception('Customer not found');
+
+    final transaction = await isar.transactions.get(invoice.transactionId);
+    if (transaction == null) throw Exception('Transaction not found');
+
+    final transactionLines = await isar.transactionLines
+        .filter()
+        .transactionIdEqualTo(transaction.id)
+        .findAll();
+
+    final lineItems = <Map<String, dynamic>>[];
+    for (final line in transactionLines) {
+      final product = line.productId != null
+          ? await isar.products.get(line.productId!)
+          : null;
+      lineItems.add({
+        'productName': product?.name ?? 'Unknown Product',
+        'qty': line.quantity,
+        'rate': line.unitPrice,
+      });
+    }
+
+    return generateInvoiceImage(
+      company: company,
+      party: party,
+      invoice: invoice,
+      transaction: transaction,
+      lineItems: lineItems,
+      openingBalance: invoice.previousBalance,
+      notes: invoice.notes,
+      attachmentImagePath: invoice.attachmentPath,
+    );
+  }
+
+  /// Share an existing sale invoice as an image.
+  /// All data (including notes & attachment) is loaded from Isar automatically.
+  static Future<void> shareExistingAsImage({
+    required int invoiceId,
+    required Isar isar,
+    required Company company,
+  }) async {
+    _logDebug('share-existing:start invoiceId=$invoiceId');
+    final imageBytes = await buildImageById(
+        invoiceId: invoiceId, isar: isar, company: company);
+    final tempDir = await getTemporaryDirectory();
+    final file = File('${tempDir.path}/invoice_$invoiceId.png');
+    await file.writeAsBytes(imageBytes);
+    _logDebug(
+      'share-existing:file-written invoiceId=$invoiceId path=${file.path} bytes=${imageBytes.length}',
+    );
+    await Share.shareXFiles([XFile(file.path)], text: 'Invoice');
+    Future.delayed(const Duration(seconds: 30), () {
+      try {
+        if (file.existsSync()) file.deleteSync();
+      } catch (_) {}
+    });
+  }
+
   static Future<void> _shareAsImage(
     Company company,
     Party party,
@@ -811,8 +1051,10 @@ class InvoiceGenerator {
     List<Map<String, dynamic>> lineItems,
     List<Map<String, dynamic>>? paymentLines,
     double? customerBalance,
-    double? openingBalance,
-  ) async {
+    double? openingBalance, [
+    String? notes,
+    String? attachmentImagePath,
+  ]) async {
     try {
       print('Starting image generation for invoice ${transaction.referenceNo}');
       print('Line items count: ${lineItems.length}');
@@ -828,6 +1070,8 @@ class InvoiceGenerator {
           paymentLines: paymentLines,
           customerBalance: customerBalance,
           openingBalance: openingBalance,
+          notes: notes,
+          attachmentImagePath: attachmentImagePath,
         ),
         Future.delayed(const Duration(seconds: 30), () {
           throw TimeoutException(
@@ -1230,10 +1474,21 @@ class InvoiceGenerator {
     List<Map<String, dynamic>>? paymentLines,
     double? customerBalance,
     double? openingBalance,
+    String? notes,
+    String? attachmentImagePath,
   }) async {
     try {
-      await _shareAsImage(company, party, invoice, transaction, lineItems,
-          paymentLines, customerBalance, openingBalance);
+      await _shareAsImage(
+          company,
+          party,
+          invoice,
+          transaction,
+          lineItems,
+          paymentLines,
+          customerBalance,
+          openingBalance,
+          notes,
+          attachmentImagePath);
     } catch (e) {
       print('Error in shareAsImage: $e');
       rethrow; // Let the calling code handle the error display

@@ -388,7 +388,9 @@ class SyncService
                     throw new \Exception("Record not found: {$tableName}#{$recordId}");
                 }
                 $syncRecordId = (int) $recordId;
-                $syncData     = array_merge($data, ['id' => $syncRecordId]);
+                // Always publish the full canonical row for UPDATE so pull clients
+                // can safely apply changes even if the incoming push payload was partial.
+                $syncData     = $record->fresh()->toArray();
                 break;
 
             case 'DELETE':

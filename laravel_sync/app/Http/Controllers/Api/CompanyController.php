@@ -46,7 +46,22 @@ class CompanyController extends Controller
             'financial_year_start_month' => 'nullable|integer|min:1|max:12',
         ]);
 
+        $user = $request->user();
+        $tenantAdminId = $user->subscriber_id ?: $user->id;
+        $tenantAdmin = \App\Models\User::find($tenantAdminId);
+
+        $maxCompanies = $tenantAdmin?->max_companies ?? 5;
+        $currentCompanyCount = Company::where('subscriber_id', $tenantAdminId)->count();
+
+        if ($currentCompanyCount >= $maxCompanies) {
+            return response()->json([
+                'success' => false,
+                'message' => "Company limit reached. Your plan allows {$maxCompanies} companies.",
+            ], 403);
+        }
+
         $company = Company::create([
+            'subscriber_id' => $tenantAdminId,
             'name' => $request->name,
             'primary_currency' => $request->primary_currency ?? 'PKR',
             'financial_year_start_month' => $request->financial_year_start_month ?? 1,
@@ -54,7 +69,7 @@ class CompanyController extends Controller
         ]);
 
         // Attach user as admin
-        $request->user()->companies()->attach($company->id, [
+        $user->companies()->attach($company->id, [
             'role' => 'admin',
             'is_active' => true,
         ]);

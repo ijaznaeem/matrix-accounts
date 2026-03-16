@@ -33,6 +33,60 @@ class PurchaseDao {
         .findAll();
   }
 
+  Future<String> _ensureUniqueReferenceNo({
+    required int companyId,
+    required TransactionType type,
+    required String referenceNo,
+    int? excludeTransactionId,
+  }) async {
+    final trimmedReference = referenceNo.trim();
+    final baseReference = trimmedReference.isEmpty
+        ? 'PUR-$companyId-${DateTime.now().millisecondsSinceEpoch}'
+        : trimmedReference;
+
+    final existingTransactions = await isar.transactions
+        .filter()
+        .companyIdEqualTo(companyId)
+        .typeEqualTo(type)
+        .findAll();
+
+    final existingReferences = existingTransactions
+        .where((transaction) => transaction.id != excludeTransactionId)
+        .map((transaction) => transaction.referenceNo.trim().toLowerCase())
+        .toSet();
+
+    if (!existingReferences.contains(baseReference.toLowerCase())) {
+      return baseReference;
+    }
+
+    final serialPattern = RegExp(r'^(.*?)-(\d+)$');
+    final match = serialPattern.firstMatch(baseReference);
+
+    if (match != null) {
+      final prefix = match.group(1)!;
+      final serialText = match.group(2)!;
+      var serial = int.tryParse(serialText) ?? 0;
+      final width = serialText.length;
+
+      while (true) {
+        serial += 1;
+        final candidate = '$prefix-${serial.toString().padLeft(width, '0')}';
+        if (!existingReferences.contains(candidate.toLowerCase())) {
+          return candidate;
+        }
+      }
+    }
+
+    var suffix = 2;
+    while (true) {
+      final candidate = '$baseReference-$suffix';
+      if (!existingReferences.contains(candidate.toLowerCase())) {
+        return candidate;
+      }
+      suffix += 1;
+    }
+  }
+
   Future<void> createPurchaseInvoice({
     required int companyId,
     required Party supplier,
@@ -41,7 +95,15 @@ class PurchaseDao {
     required List<PurchaseLineInput> lines,
     List<sales.PaymentLineInput>? paymentLines,
     int? userId,
+    String? notes,
+    String? attachmentPath,
   }) async {
+    final uniqueReferenceNo = await _ensureUniqueReferenceNo(
+      companyId: companyId,
+      type: TransactionType.purchase,
+      referenceNo: referenceNo,
+    );
+
     final totalAmount = lines.fold(0.0, (sum, l) => sum + (l.qty * l.rate));
 
     // Debug the amount calculation
@@ -65,7 +127,7 @@ class PurchaseDao {
       ..companyId = companyId
       ..type = TransactionType.purchase
       ..date = date
-      ..referenceNo = referenceNo
+      ..referenceNo = uniqueReferenceNo
       ..partyId = supplier.id
       ..totalAmount = totalAmount
       ..createdByUserId = userId;
@@ -84,7 +146,7 @@ class PurchaseDao {
           'company_id': companyId,
           'type': 'purchase',
           'date': date.toIso8601String(),
-          'reference_no': referenceNo,
+          'reference_no': uniqueReferenceNo,
           'party_id': supplier.id,
           'total_amount': totalAmount,
           'is_posted': false,
@@ -119,12 +181,14 @@ class PurchaseDao {
         ..partyId = supplier.id
         ..invoiceDate = date
         ..grandTotal = transaction.totalAmount
-        ..invoiceNumber = referenceNo
+        ..invoiceNumber = uniqueReferenceNo
         ..previousBalance = previousBalance
         ..paidAmount = totalPaid
         ..remainingBalance =
             previousBalance + transaction.totalAmount - totalPaid
-        ..status = 'Pending';
+        ..status = 'Pending'
+        ..notes = notes
+        ..attachmentPath = attachmentPath;
 
       final invoiceId = await isar.invoices.put(invoice);
 
@@ -142,10 +206,13 @@ class PurchaseDao {
           'party_id': supplier.id,
           'invoice_date': date.toIso8601String(),
           'grand_total': invoice.grandTotal,
+          'invoice_number': invoice.invoiceNumber,
           'status': invoice.status,
           'previous_balance': invoice.previousBalance,
           'paid_amount': invoice.paidAmount,
           'remaining_balance': invoice.remainingBalance,
+          'notes': invoice.notes,
+          'attachment_path': invoice.attachmentPath,
         })
         ..createdAt = DateTime.now()
         ..synced = false);
@@ -219,7 +286,7 @@ class PurchaseDao {
         supplierId: supplier.id,
         supplierName: supplier.name,
         invoiceDate: date,
-        invoiceNo: referenceNo,
+        invoiceNo: uniqueReferenceNo,
         totalAmount: transaction.totalAmount,
       );
 
@@ -252,7 +319,7 @@ class PurchaseDao {
             supplierId: supplier.id,
             supplierName: supplier.name,
             paymentDate: paymentDate,
-            invoiceNo: referenceNo,
+            invoiceNo: uniqueReferenceNo,
             amount: paymentLine.amount,
             accountCode: accountCode,
           );
@@ -270,18 +337,26 @@ class PurchaseDao {
     required List<PurchaseLineInput> lines,
     List<sales.PaymentLineInput>? paymentLines,
     int? userId,
+    String? notes,
+    String? attachmentPath,
   }) async {
     final invoice = await isar.invoices.get(invoiceId);
     if (invoice == null) throw Exception('Invoice not found');
 
     final transactionId = invoice.transactionId;
+    final uniqueReferenceNo = await _ensureUniqueReferenceNo(
+      companyId: companyId,
+      type: TransactionType.purchase,
+      referenceNo: referenceNo,
+      excludeTransactionId: transactionId,
+    );
 
     await isar.writeTxn(() async {
       // Update transaction
       final transaction = await isar.transactions.get(transactionId);
       if (transaction != null) {
         transaction.date = date;
-        transaction.referenceNo = referenceNo;
+        transaction.referenceNo = uniqueReferenceNo;
         transaction.partyId = supplier.id;
         transaction.totalAmount =
             lines.fold(0.0, (sum, l) => sum + (l.qty * l.rate));
@@ -296,7 +371,7 @@ class PurchaseDao {
             'company_id': companyId,
             'type': 'purchase',
             'date': date.toIso8601String(),
-            'reference_no': referenceNo,
+            'reference_no': uniqueReferenceNo,
             'party_id': supplier.id,
             'total_amount': transaction.totalAmount,
             'is_posted': transaction.isPosted,
@@ -309,6 +384,9 @@ class PurchaseDao {
       invoice.partyId = supplier.id;
       invoice.invoiceDate = date;
       invoice.grandTotal = lines.fold(0.0, (sum, l) => sum + (l.qty * l.rate));
+      invoice.invoiceNumber = uniqueReferenceNo;
+      invoice.notes = notes;
+      invoice.attachmentPath = attachmentPath;
       await isar.invoices.put(invoice);
       await isar.syncChanges.put(SyncChange()
         ..companyId = companyId
@@ -323,10 +401,13 @@ class PurchaseDao {
           'party_id': supplier.id,
           'invoice_date': date.toIso8601String(),
           'grand_total': invoice.grandTotal,
+          'invoice_number': invoice.invoiceNumber,
           'status': invoice.status,
           'previous_balance': invoice.previousBalance,
           'paid_amount': invoice.paidAmount,
           'remaining_balance': invoice.remainingBalance,
+          'notes': invoice.notes,
+          'attachment_path': invoice.attachmentPath,
         })
         ..createdAt = DateTime.now()
         ..synced = false);
@@ -441,7 +522,7 @@ class PurchaseDao {
         supplierId: supplier.id,
         supplierName: supplier.name,
         invoiceDate: date,
-        invoiceNo: referenceNo,
+        invoiceNo: uniqueReferenceNo,
         totalAmount: newTotal,
       );
 
@@ -474,7 +555,7 @@ class PurchaseDao {
             supplierId: supplier.id,
             supplierName: supplier.name,
             paymentDate: paymentDate,
-            invoiceNo: referenceNo,
+            invoiceNo: uniqueReferenceNo,
             amount: paymentLine.amount,
             accountCode: accountCode,
           );

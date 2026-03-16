@@ -23,6 +23,8 @@ class Invoice extends Model
         'paid_amount',
         'remaining_balance',
         'invoice_number',
+        'notes',
+        'attachment_path',
     ];
 
     protected $casts = [

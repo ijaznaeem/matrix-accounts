@@ -4,11 +4,15 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:intl/intl.dart';
+import 'package:pdf/pdf.dart';
+import 'package:pdf/widgets.dart' as pw;
+import 'package:printing/printing.dart';
 
 import '../../../core/config/providers.dart';
 import '../../../core/widgets/navigation_drawer_helper.dart';
 import '../../../data/models/invoice_stock_models.dart';
 import '../../../data/models/party_model.dart';
+import '../services/invoice_generator.dart';
 import '../services/sales_invoice_service.dart';
 
 class SaleInvoiceListScreen extends ConsumerStatefulWidget {
@@ -58,280 +62,59 @@ class _SaleInvoiceListScreenState extends ConsumerState<SaleInvoiceListScreen> {
     );
   }
 
-  // Future<void> _shareInvoice(Invoice invoice) async {
-  //   await _shareAsPDF(invoice);
-  // }
+  Future<void> _shareInvoiceImage(Invoice invoice) async {
+    try {
+      _showSnackBar('Preparing invoice image...');
+      final company = ref.read(currentCompanyProvider);
+      if (company == null) {
+        _showSnackBar('No company selected', isError: true);
+        return;
+      }
+      final isar = ref.read(isarServiceProvider).isar;
+      await InvoiceGenerator.shareExistingAsImage(
+        invoiceId: invoice.id,
+        isar: isar,
+        company: company,
+      );
+    } catch (e) {
+      _showSnackBar('Error sharing invoice image: $e', isError: true);
+    }
+  }
 
-  // Future<void> _printInvoice(Invoice invoice) async {
-  //   try {
-  //     ScaffoldMessenger.of(context).showSnackBar(
-  //       const SnackBar(content: Text('Generating PDF for printing...')),
-  //     );
-
-  //     final isar = ref.read(isarServiceProvider).isar;
-  //     final service = SalesInvoiceService(isar);
-  //     final company = ref.read(currentCompanyProvider);
-
-  //     if (company == null) {
-  //       ScaffoldMessenger.of(context).showSnackBar(
-  //         const SnackBar(content: Text('No company selected')),
-  //       );
-  //       return;
-  //     }
-
-  //     // Get required data
-  //     final party = await service.getPartyForInvoice(invoice.partyId);
-  //     final salesDao = ref.read(salesDaoProvider);
-  //     final transaction = await salesDao.getTransactionForInvoice(invoice.id);
-
-  //     if (party == null || transaction == null) {
-  //       ScaffoldMessenger.of(context).showSnackBar(
-  //         const SnackBar(content: Text('Could not load invoice data')),
-  //       );
-  //       return;
-  //     }
-
-  //     // Get transaction lines
-  //     final transactionLines =
-  //         await salesDao.getTransactionLines(transaction.id);
-  //     final lineItems = transactionLines
-  //         .map((line) => {
-  //               'productName': line.productId != null
-  //                   ? isar.products.getSync(line.productId!)?.name ??
-  //                       'Unknown Product'
-  //                   : 'Unknown Product',
-  //               'quantity': line.quantity,
-  //               'rate': line.unitPrice,
-  //               'amount': line.quantity * line.unitPrice,
-  //             })
-  //         .toList();
-
-  // Generate PDF using InvoiceGenerator
-  //     final customerBalance = await _getCustomerBalance(invoice.partyId);
-  //     final pdfBytes = await InvoiceGenerator.generateInvoicePdf(
-  //       company: company,
-  //       party: party,
-  //       invoice: invoice,
-  //       transaction: transaction,
-  //       lineItems: lineItems,
-  //       customerBalance: customerBalance,
-  //     );
-
-  //     // Print PDF
-  //     await Printing.layoutPdf(
-  //       onLayout: (format) async => pdfBytes,
-  //       name: 'sales_invoice_${transaction.referenceNo}.pdf',
-  //     );
-  //   } catch (e) {
-  //     if (mounted) {
-  //       ScaffoldMessenger.of(context).showSnackBar(
-  //         SnackBar(
-  //           content: Text('Error printing invoice: $e'),
-  //           backgroundColor: Colors.red,
-  //         ),
-  //       );
-  //     }
-  //   }
-  // }
-
-  // Future<void> _shareAsPDF(Invoice invoice) async {
-  //   try {
-  //     _showSnackBar('Generating PDF...');
-
-  //     final isar = ref.read(isarServiceProvider).isar;
-  //     final service = SalesInvoiceService(isar);
-  //     final salesDao = ref.read(salesDaoProvider);
-  //     final party = await service.getPartyForInvoice(invoice.partyId);
-  //     final company = ref.read(currentCompanyProvider);
-
-  //     // Get transaction and line items
-  //     final transaction = await salesDao.getTransactionForInvoice(invoice.id);
-  //     final transactionLines = transaction != null
-  //         ? await salesDao.getTransactionLines(transaction.id)
-  //         : <TransactionLine>[];
-
-  //     final pdf = pw.Document();
-
-  //     pdf.addPage(
-  //       pw.Page(
-  //         pageFormat: PdfPageFormat.a4,
-  //         build: (pw.Context context) {
-  //           return pw.Column(
-  //             crossAxisAlignment: pw.CrossAxisAlignment.start,
-  //             children: [
-  //               // Header
-  //               pw.Text(
-  //                 'INVOICE #${invoice.id}',
-  //                 style: pw.TextStyle(
-  //                   fontSize: 24,
-  //                   fontWeight: pw.FontWeight.bold,
-  //                 ),
-  //               ),
-  //               pw.SizedBox(height: 20),
-
-  //               // Company and Customer Info
-  //               pw.Row(
-  //                 mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
-  //                 children: [
-  //                   pw.Column(
-  //                     crossAxisAlignment: pw.CrossAxisAlignment.start,
-  //                     children: [
-  //                       pw.Text('From: ${company?.name ?? 'Company'}'),
-  //                       pw.SizedBox(height: 10),
-  //                       pw.Text('Customer: ${party?.name ?? 'Unknown'}'),
-  //                       pw.Text(
-  //                           'Date: ${_dateFormat.format(invoice.invoiceDate)}'),
-  //                       if (transaction != null)
-  //                         pw.Text('Ref: ${transaction.referenceNo}'),
-  //                     ],
-  //                   ),
-  //                   if (invoice.status != null)
-  //                     pw.Text('Status: ${invoice.status!}'),
-  //                 ],
-  //               ),
-  //               pw.SizedBox(height: 30),
-
-  //               // Line Items Table
-  //               if (transactionLines.isNotEmpty) ...[
-  //                 pw.Table(
-  //                   border: pw.TableBorder.all(),
-  //                   columnWidths: {
-  //                     0: const pw.FlexColumnWidth(3),
-  //                     1: const pw.FlexColumnWidth(1),
-  //                     2: const pw.FlexColumnWidth(1.5),
-  //                     3: const pw.FlexColumnWidth(1.5),
-  //                   },
-  //                   children: [
-  //                     // Header
-  //                     pw.TableRow(
-  //                       decoration:
-  //                           const pw.BoxDecoration(color: PdfColors.grey300),
-  //                       children: [
-  //                         pw.Padding(
-  //                           padding: const pw.EdgeInsets.all(8),
-  //                           child: pw.Text('Item',
-  //                               style: pw.TextStyle(
-  //                                   fontWeight: pw.FontWeight.bold)),
-  //                         ),
-  //                         pw.Padding(
-  //                           padding: const pw.EdgeInsets.all(8),
-  //                           child: pw.Text('Qty',
-  //                               style: pw.TextStyle(
-  //                                   fontWeight: pw.FontWeight.bold),
-  //                               textAlign: pw.TextAlign.center),
-  //                         ),
-  //                         pw.Padding(
-  //                           padding: const pw.EdgeInsets.all(8),
-  //                           child: pw.Text('Rate',
-  //                               style: pw.TextStyle(
-  //                                   fontWeight: pw.FontWeight.bold),
-  //                               textAlign: pw.TextAlign.right),
-  //                         ),
-  //                         pw.Padding(
-  //                           padding: const pw.EdgeInsets.all(8),
-  //                           child: pw.Text('Amount',
-  //                               style: pw.TextStyle(
-  //                                   fontWeight: pw.FontWeight.bold),
-  //                               textAlign: pw.TextAlign.right),
-  //                         ),
-  //                       ],
-  //                     ),
-  //                     // Data rows
-  //                     ...transactionLines.map((line) {
-  //                       final product = line.productId != null
-  //                           ? isar.products.getSync(line.productId!)
-  //                           : null;
-  //                       final productName = product?.name ?? 'Unknown Product';
-  //                       final amount = line.quantity * line.unitPrice;
-
-  //                       return pw.TableRow(
-  //                         children: [
-  //                           pw.Padding(
-  //                             padding: const pw.EdgeInsets.all(8),
-  //                             child: pw.Text(productName),
-  //                           ),
-  //                           pw.Padding(
-  //                             padding: const pw.EdgeInsets.all(8),
-  //                             child: pw.Text(line.quantity.toStringAsFixed(0),
-  //                                 textAlign: pw.TextAlign.center),
-  //                           ),
-  //                           pw.Padding(
-  //                             padding: const pw.EdgeInsets.all(8),
-  //                             child: pw.Text(line.unitPrice.toStringAsFixed(2),
-  //                                 textAlign: pw.TextAlign.right),
-  //                           ),
-  //                           pw.Padding(
-  //                             padding: const pw.EdgeInsets.all(8),
-  //                             child: pw.Text(amount.toStringAsFixed(2),
-  //                                 textAlign: pw.TextAlign.right),
-  //                           ),
-  //                         ],
-  //                       );
-  //                     }).toList(),
-  //                   ],
-  //                 ),
-  //                 pw.SizedBox(height: 20),
-  //               ],
-
-  //               pw.Divider(),
-  //               pw.SizedBox(height: 10),
-
-  //               // Total
-  //               pw.Row(
-  //                 mainAxisAlignment: pw.MainAxisAlignment.end,
-  //                 children: [
-  //                   pw.Column(
-  //                     crossAxisAlignment: pw.CrossAxisAlignment.end,
-  //                     children: [
-  //                       if (transactionLines.isNotEmpty)
-  //                         pw.Row(
-  //                           children: [
-  //                             pw.Text('Subtotal: '),
-  //                             pw.Text(transactionLines
-  //                                 .fold<double>(
-  //                                     0,
-  //                                     (sum, line) =>
-  //                                         sum +
-  //                                         (line.quantity * line.unitPrice))
-  //                                 .toStringAsFixed(2)),
-  //                           ],
-  //                         ),
-  //                       pw.SizedBox(height: 5),
-  //                       pw.Row(
-  //                         children: [
-  //                           pw.Text(
-  //                             'Total: ',
-  //                             style: pw.TextStyle(
-  //                                 fontSize: 18, fontWeight: pw.FontWeight.bold),
-  //                           ),
-  //                           pw.Text(
-  //                             _currencyFormat.format(invoice.grandTotal),
-  //                             style: pw.TextStyle(
-  //                                 fontSize: 18, fontWeight: pw.FontWeight.bold),
-  //                           ),
-  //                         ],
-  //                       ),
-  //                     ],
-  //                   ),
-  //                 ],
-  //               ),
-  //             ],
-  //           );
-  //         },
-  //       ),
-  //     );
-
-  //     final tempDir = await getTemporaryDirectory();
-  //     final file = File('${tempDir.path}/invoice_${invoice.id}.pdf');
-  //     await file.writeAsBytes(await pdf.save());
-
-  //     await Share.shareXFiles([XFile(file.path)],
-  //         subject: 'Invoice #${invoice.id}');
-  //     _showSnackBar('Invoice shared successfully');
-  //   } catch (e) {
-  //     _showSnackBar('Error sharing invoice: $e', isError: true);
-  //   }
-  // }
+  Future<void> _printInvoicePdf(Invoice invoice) async {
+    try {
+      _showSnackBar('Preparing invoice PDF...');
+      final company = ref.read(currentCompanyProvider);
+      if (company == null) {
+        _showSnackBar('No company selected', isError: true);
+        return;
+      }
+      final isar = ref.read(isarServiceProvider).isar;
+      final imageBytes = await InvoiceGenerator.buildImageById(
+        invoiceId: invoice.id,
+        isar: isar,
+        company: company,
+      );
+      final memoryImage = pw.MemoryImage(imageBytes);
+      await Printing.layoutPdf(
+        onLayout: (PdfPageFormat format) async {
+          final document = pw.Document();
+          document.addPage(
+            pw.Page(
+              pageFormat: format,
+              margin: pw.EdgeInsets.zero,
+              build: (_) => pw.Center(
+                child: pw.Image(memoryImage, fit: pw.BoxFit.contain),
+              ),
+            ),
+          );
+          return document.save();
+        },
+      );
+    } catch (e) {
+      _showSnackBar('Error printing invoice: $e', isError: true);
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -343,7 +126,6 @@ class _SaleInvoiceListScreenState extends ConsumerState<SaleInvoiceListScreen> {
       return Scaffold(
         appBar: AppBar(
           title: const Text('Sale Invoices'),
-          backgroundColor: Colors.blueAccent,
         ),
         body: const Center(child: Text('Please select a company first')),
       );
@@ -361,8 +143,6 @@ class _SaleInvoiceListScreenState extends ConsumerState<SaleInvoiceListScreen> {
       appBar: AppBar(
         title: const Text('Sale List'),
         elevation: 0,
-        backgroundColor: Colors.blueAccent,
-        foregroundColor: Colors.black,
       ),
       body: Column(
         children: [
@@ -411,7 +191,7 @@ class _SaleInvoiceListScreenState extends ConsumerState<SaleInvoiceListScreen> {
                         final totalAmount = snapshot.data!.fold<double>(
                             0.0, (sum, invoice) => sum + invoice.grandTotal);
                         return Card(
-                          color: Colors.blue.shade50,
+                          color: colorScheme.primaryContainer,
                           child: Padding(
                             padding: const EdgeInsets.all(12),
                             child: Column(
@@ -420,14 +200,14 @@ class _SaleInvoiceListScreenState extends ConsumerState<SaleInvoiceListScreen> {
                                 Text(
                                   'Total Sales',
                                   style: theme.textTheme.labelMedium?.copyWith(
-                                    color: Colors.blue.shade700,
+                                    color: colorScheme.onPrimaryContainer,
                                   ),
                                 ),
                                 const SizedBox(height: 4),
                                 Text(
                                   'Rs ${NumberFormat('#,##0.0').format(totalAmount)}',
                                   style: theme.textTheme.titleMedium?.copyWith(
-                                    color: Colors.blue.shade800,
+                                    color: colorScheme.onPrimaryContainer,
                                     fontWeight: FontWeight.bold,
                                   ),
                                 ),
@@ -437,7 +217,7 @@ class _SaleInvoiceListScreenState extends ConsumerState<SaleInvoiceListScreen> {
                         );
                       }
                       return Card(
-                        color: Colors.blue.shade50,
+                        color: colorScheme.primaryContainer,
                         child: Padding(
                           padding: const EdgeInsets.all(12),
                           child: Column(
@@ -446,14 +226,14 @@ class _SaleInvoiceListScreenState extends ConsumerState<SaleInvoiceListScreen> {
                               Text(
                                 'Total Sales',
                                 style: theme.textTheme.labelMedium?.copyWith(
-                                  color: Colors.blue.shade700,
+                                  color: colorScheme.onPrimaryContainer,
                                 ),
                               ),
                               const SizedBox(height: 4),
                               Text(
                                 'Loading...',
                                 style: theme.textTheme.titleMedium?.copyWith(
-                                  color: Colors.blue.shade800,
+                                  color: colorScheme.onPrimaryContainer,
                                   fontWeight: FontWeight.bold,
                                 ),
                               ),
@@ -558,7 +338,7 @@ class _SaleInvoiceListScreenState extends ConsumerState<SaleInvoiceListScreen> {
       ),
       floatingActionButton: FloatingActionButton.extended(
         onPressed: () => _navigateToInvoiceForm(),
-        backgroundColor: Colors.blueAccent,
+        backgroundColor: colorScheme.primary,
         tooltip: 'Add Sale Invoice',
         icon: const Icon(Icons.add, color: Colors.white),
         label: const Text('Add Sale', style: TextStyle(color: Colors.white)),
@@ -625,9 +405,10 @@ class _SaleInvoiceListScreenState extends ConsumerState<SaleInvoiceListScreen> {
       },
       child: Card(
         margin: EdgeInsets.zero,
-        elevation: 2,
+        elevation: 0,
         shape: RoundedRectangleBorder(
           borderRadius: BorderRadius.circular(12),
+          side: BorderSide(color: Colors.grey.shade300),
         ),
         child: InkWell(
           borderRadius: BorderRadius.circular(12),
@@ -642,7 +423,7 @@ class _SaleInvoiceListScreenState extends ConsumerState<SaleInvoiceListScreen> {
                   mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
                     Text(
-                      DateFormat('dd MMM yy').format(invoice.invoiceDate),
+                      '${(invoice.invoiceNumber != null && invoice.invoiceNumber!.trim().isNotEmpty) ? invoice.invoiceNumber!.trim() : '#${invoice.id}'} • ${DateFormat('dd MMM yy').format(invoice.invoiceDate)}',
                       style: TextStyle(
                         fontSize: 12,
                         color: colorScheme.onSurfaceVariant,
@@ -659,51 +440,96 @@ class _SaleInvoiceListScreenState extends ConsumerState<SaleInvoiceListScreen> {
                     final party = snapshot.data;
                     final partyName = party?.name ?? 'Loading...';
 
-                    return Row(
+                    return Column(
                       children: [
-                        // Customer Name (Left)
-                        Expanded(
-                          flex: 2,
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Text(
-                                partyName,
-                                style: const TextStyle(
-                                  fontSize: 13,
-                                  fontWeight: FontWeight.w600,
-                                ),
-                                maxLines: 2,
-                                overflow: TextOverflow.ellipsis,
+                        Row(
+                          children: [
+                            // Customer Name (Left)
+                            Expanded(
+                              flex: 2,
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text(
+                                    partyName,
+                                    style: const TextStyle(
+                                      fontSize: 13,
+                                      fontWeight: FontWeight.w600,
+                                    ),
+                                    maxLines: 2,
+                                    overflow: TextOverflow.ellipsis,
+                                  ),
+                                ],
                               ),
-                            ],
-                          ),
-                        ),
+                            ),
 
-                        const SizedBox(width: 8),
+                            const SizedBox(width: 8),
 
-                        // Total Amount (Center)
-                        Expanded(
-                          flex: 2,
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.center,
-                            children: [
-                              Text(
-                                'Rs ${NumberFormat('#,##0').format(invoice.grandTotal)}',
-                                style: const TextStyle(
-                                  fontSize: 13,
-                                  fontWeight: FontWeight.bold,
-                                  color: Colors.black,
-                                ),
-                                textAlign: TextAlign.center,
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
+                            // Total Amount (Center)
+                            Expanded(
+                              flex: 2,
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.center,
+                                children: [
+                                  Text(
+                                    'Rs ${NumberFormat('#,##0').format(invoice.grandTotal)}',
+                                    style: TextStyle(
+                                      fontSize: 13,
+                                      fontWeight: FontWeight.bold,
+                                      color: Colors.red.shade700,
+                                    ),
+                                    textAlign: TextAlign.center,
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                  ),
+                                ],
                               ),
-                            ],
-                          ),
+                            ),
+                          ],
                         ),
-
-                        const SizedBox(width: 8),
+                        const SizedBox(height: 10),
+                        Row(
+                          mainAxisAlignment: MainAxisAlignment.end,
+                          children: [
+                            OutlinedButton.icon(
+                              onPressed: () => _shareInvoiceImage(invoice),
+                              icon: Icon(
+                                Icons.share,
+                                size: 16,
+                                color: Colors.blue.shade700,
+                              ),
+                              label: Text(
+                                'Share',
+                                style: TextStyle(color: Colors.blue.shade700),
+                              ),
+                              style: OutlinedButton.styleFrom(
+                                visualDensity: VisualDensity.compact,
+                                backgroundColor: Colors.blue.shade50,
+                                side: BorderSide(color: Colors.blue.shade200),
+                              ),
+                            ),
+                            const SizedBox(width: 8),
+                            OutlinedButton.icon(
+                              onPressed: () => _printInvoicePdf(invoice),
+                              icon: Icon(
+                                Icons.print,
+                                size: 16,
+                                color: Colors.deepPurple.shade700,
+                              ),
+                              label: Text(
+                                'Print',
+                                style: TextStyle(
+                                    color: Colors.deepPurple.shade700),
+                              ),
+                              style: OutlinedButton.styleFrom(
+                                visualDensity: VisualDensity.compact,
+                                backgroundColor: Colors.deepPurple.shade50,
+                                side: BorderSide(
+                                    color: Colors.deepPurple.shade200),
+                              ),
+                            ),
+                          ],
+                        ),
                       ],
                     );
                   },

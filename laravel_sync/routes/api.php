@@ -11,6 +11,7 @@ use App\Http\Controllers\Api\AccountController;
 use App\Http\Controllers\Api\PaymentAccountController;
 use App\Http\Controllers\Api\PaymentInController;
 use App\Http\Controllers\Api\PaymentOutController;
+use App\Http\Controllers\Api\AttachmentController;
 
 /*
 |--------------------------------------------------------------------------
@@ -68,6 +69,10 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::post('/invoices',       [InvoiceController::class, 'store']);
     Route::put('/invoices/{id}',   [InvoiceController::class, 'update']);
     Route::delete('/invoices/{id}',[InvoiceController::class, 'destroy']);
+
+    // ── Attachments ───────────────────────────────────
+    Route::post('/attachments/invoice/upload', [AttachmentController::class, 'uploadInvoiceAttachment']);
+    Route::get('/attachments/invoice/{invoiceId}', [AttachmentController::class, 'downloadInvoiceAttachment']);
 
     // ── Accounts & ledger ─────────────────────────────
     Route::get('/accounts',              [AccountController::class, 'index']);

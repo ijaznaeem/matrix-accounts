@@ -1,13 +1,14 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
+import 'package:veyo_sync/core/providers/settings_provider.dart';
 
 class Settings_Screen extends ConsumerWidget {
   const Settings_Screen({super.key});
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    // final theme = Theme.of(context);
+    final settings = ref.watch(settingsProvider);
 
     return Scaffold(
       backgroundColor: Colors.grey.shade50,
@@ -17,7 +18,7 @@ class Settings_Screen extends ConsumerWidget {
           style: TextStyle(fontWeight: FontWeight.w600),
         ),
         backgroundColor: Colors.blueAccent,
-         elevation: 0,
+        elevation: 0,
         surfaceTintColor: Colors.transparent,
         leading: IconButton(
           icon: Container(
@@ -210,8 +211,9 @@ class Settings_Screen extends ConsumerWidget {
                   context: context,
                   icon: Icons.sync,
                   title: 'Data Sync',
-                  subtitle: 'Configure data synchronization settings',
-                  onTap: () => _showComingSoonDialog(context, 'Data Sync'),
+                  subtitle:
+                      'Attachment prefetch per pull: ${settings.syncAttachmentPrefetchLimit} (0 = off)',
+                  onTap: () => _showSyncPrefetchLimitDialog(context, ref),
                 ),
               ],
             ),
@@ -258,6 +260,78 @@ class Settings_Screen extends ConsumerWidget {
             const SizedBox(height: 32),
           ],
         ),
+      ),
+    );
+  }
+
+  void _showSyncPrefetchLimitDialog(BuildContext context, WidgetRef ref) {
+    final settings = ref.read(settingsProvider);
+    final controller = TextEditingController(
+      text: settings.syncAttachmentPrefetchLimit.toString(),
+    );
+
+    showDialog(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Attachment Prefetch Limit'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text('Set remote attachments to prefetch per sync pull.'),
+            const SizedBox(height: 12),
+            TextField(
+              controller: controller,
+              keyboardType: TextInputType.number,
+              decoration: const InputDecoration(
+                labelText: 'Limit',
+                hintText: '0-100',
+              ),
+            ),
+            const SizedBox(height: 8),
+            const Text(
+              'Use 0 to disable prefetch. Default is 10.',
+              style: TextStyle(fontSize: 12),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop(),
+            child: const Text('Cancel'),
+          ),
+          ElevatedButton(
+            onPressed: () async {
+              final raw = controller.text.trim();
+              final parsed = int.tryParse(raw);
+              if (parsed == null) {
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(
+                    content: Text('Please enter a valid number.'),
+                  ),
+                );
+                return;
+              }
+
+              final safeValue = parsed.clamp(0, 100);
+              await ref.read(settingsProvider.notifier).updateSystemSettings(
+                    syncAttachmentPrefetchLimit: safeValue,
+                  );
+
+              if (context.mounted) {
+                Navigator.of(dialogContext).pop();
+                ScaffoldMessenger.of(context).showSnackBar(
+                  SnackBar(
+                    content: Text(
+                      'Attachment prefetch limit saved: $safeValue',
+                    ),
+                  ),
+                );
+              }
+            },
+            child: const Text('Save'),
+          ),
+        ],
       ),
     );
   }

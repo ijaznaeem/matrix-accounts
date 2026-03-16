@@ -35,6 +35,12 @@ class Invoice {
   double remainingBalance =
       0; // Unpaid amount (previousBalance + grandTotal - paidAmount)
   String? invoiceNumber; // For better tracking
+
+  /// Optional notes / remarks entered by the user on the sale form.
+  String? notes;
+
+  /// Absolute file-system path to a user-attached image (stored on device).
+  String? attachmentPath;
 }
 
 enum StockMovementType {

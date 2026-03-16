@@ -3,11 +3,15 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:intl/intl.dart';
+import 'package:pdf/pdf.dart';
+import 'package:pdf/widgets.dart' as pw;
+import 'package:printing/printing.dart';
 
 import '../../../core/config/providers.dart';
 import '../../../core/widgets/navigation_drawer_helper.dart';
 import '../../../data/models/invoice_stock_models.dart';
 import '../../../data/models/party_model.dart';
+import '../services/purchase_invoice_generator.dart';
 import '../services/purchase_invoice_service.dart';
 import 'purchase_invoice_form_screen.dart';
 
@@ -25,6 +29,8 @@ class _PurchaseInvoiceListScreenState
   String _searchQuery = '';
   final _currencyFormat = NumberFormat.currency(symbol: 'PKR ');
   final _dateFormat = DateFormat('dd MMM yyyy');
+  final _cardMargin = const EdgeInsets.symmetric(vertical: 8);
+  final _cardBorderRadius = 12.0;
 
   // Cache the futures to prevent rebuilding
   Future<List<Invoice>>? _invoicesFuture;
@@ -69,6 +75,70 @@ class _PurchaseInvoiceListScreenState
     super.dispose();
   }
 
+  void _showSnackBar(String message, {bool isError = false}) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(message),
+        backgroundColor: isError ? Colors.red : Colors.green,
+      ),
+    );
+  }
+
+  Future<void> _shareInvoiceImage(Invoice invoice) async {
+    try {
+      _showSnackBar('Preparing invoice image...');
+      final company = ref.read(currentCompanyProvider);
+      if (company == null) {
+        _showSnackBar('No company selected', isError: true);
+        return;
+      }
+      final isar = ref.read(isarServiceProvider).isar;
+      await PurchaseInvoiceGenerator.shareExistingAsImage(
+        invoiceId: invoice.id,
+        isar: isar,
+        company: company,
+      );
+    } catch (e) {
+      _showSnackBar('Error sharing invoice image: $e', isError: true);
+    }
+  }
+
+  Future<void> _printInvoicePdf(Invoice invoice) async {
+    try {
+      _showSnackBar('Preparing invoice PDF...');
+      final company = ref.read(currentCompanyProvider);
+      if (company == null) {
+        _showSnackBar('No company selected', isError: true);
+        return;
+      }
+      final isar = ref.read(isarServiceProvider).isar;
+      final imageBytes = await PurchaseInvoiceGenerator.buildImageById(
+        invoiceId: invoice.id,
+        isar: isar,
+        company: company,
+      );
+      final memoryImage = pw.MemoryImage(imageBytes);
+      await Printing.layoutPdf(
+        onLayout: (PdfPageFormat format) async {
+          final document = pw.Document();
+          document.addPage(
+            pw.Page(
+              pageFormat: format,
+              margin: pw.EdgeInsets.zero,
+              build: (_) => pw.Center(
+                child: pw.Image(memoryImage, fit: pw.BoxFit.contain),
+              ),
+            ),
+          );
+          return document.save();
+        },
+      );
+    } catch (e) {
+      _showSnackBar('Error printing invoice: $e', isError: true);
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
@@ -96,7 +166,6 @@ class _PurchaseInvoiceListScreenState
       appBar: AppBar(
         title: const Text('Purchase List'),
         elevation: 0,
-        backgroundColor: Colors.blueAccent,
       ),
       body: Column(
         children: [
@@ -151,7 +220,7 @@ class _PurchaseInvoiceListScreenState
                         final totalAmount = snapshot.data!.fold<double>(
                             0.0, (sum, invoice) => sum + invoice.grandTotal);
                         return Card(
-                          color: Colors.blue.shade50,
+                          color: colorScheme.primaryContainer,
                           child: Padding(
                             padding: const EdgeInsets.all(12),
                             child: Column(
@@ -160,14 +229,14 @@ class _PurchaseInvoiceListScreenState
                                 Text(
                                   'Total Purchase',
                                   style: theme.textTheme.labelMedium?.copyWith(
-                                    color: Colors.blue.shade700,
+                                    color: colorScheme.onPrimaryContainer,
                                   ),
                                 ),
                                 const SizedBox(height: 4),
                                 Text(
                                   'Rs ${NumberFormat('#,##0.0').format(totalAmount)}',
                                   style: theme.textTheme.titleMedium?.copyWith(
-                                    color: Colors.blue.shade800,
+                                    color: colorScheme.onPrimaryContainer,
                                     fontWeight: FontWeight.bold,
                                   ),
                                 ),
@@ -177,7 +246,7 @@ class _PurchaseInvoiceListScreenState
                         );
                       }
                       return Card(
-                        color: Colors.blue.shade50,
+                        color: colorScheme.primaryContainer,
                         child: Padding(
                           padding: const EdgeInsets.all(12),
                           child: Column(
@@ -186,14 +255,14 @@ class _PurchaseInvoiceListScreenState
                               Text(
                                 'Total Purchase',
                                 style: theme.textTheme.labelMedium?.copyWith(
-                                  color: Colors.blue.shade700,
+                                  color: colorScheme.onPrimaryContainer,
                                 ),
                               ),
                               const SizedBox(height: 4),
                               Text(
                                 'Loading...',
                                 style: theme.textTheme.titleMedium?.copyWith(
-                                  color: Colors.blue.shade800,
+                                  color: colorScheme.onPrimaryContainer,
                                   fontWeight: FontWeight.bold,
                                 ),
                               ),
@@ -304,7 +373,7 @@ class _PurchaseInvoiceListScreenState
             _refreshInvoices(); // Use refresh method instead of setState
           }
         },
-        backgroundColor: Colors.blueAccent,
+        backgroundColor: colorScheme.primary,
         tooltip: 'Add Purchase Invoice',
         icon: const Icon(Icons.add, color: Colors.white),
         label:
@@ -320,7 +389,7 @@ class _PurchaseInvoiceListScreenState
   ) {
     return Dismissible(
         key: Key('invoice_${invoice.id}'),
-        direction: DismissDirection.startToEnd,
+        direction: DismissDirection.endToStart,
         confirmDismiss: (direction) async {
           return await showDialog<bool>(
             context: context,
@@ -375,36 +444,25 @@ class _PurchaseInvoiceListScreenState
           }
         },
         background: Container(
-          alignment: Alignment.centerLeft,
-          padding: const EdgeInsets.only(left: 20),
+          alignment: Alignment.centerRight,
+          margin: _cardMargin,
+          padding: const EdgeInsets.only(right: 20),
           decoration: BoxDecoration(
             color: Colors.red,
-            borderRadius: BorderRadius.circular(12),
+            borderRadius: BorderRadius.circular(_cardBorderRadius),
           ),
-          child: const Row(
-            children: [
-              Icon(
-                Icons.delete,
-                color: Colors.white,
-                size: 24,
-              ),
-              SizedBox(width: 8),
-              Text(
-                'Delete',
-                style: TextStyle(
-                  color: Colors.white,
-                  fontWeight: FontWeight.bold,
-                  fontSize: 16,
-                ),
-              ),
-            ],
+          child: const Icon(
+            Icons.delete,
+            color: Colors.white,
+            size: 32,
           ),
         ),
         child: Card(
-          margin: EdgeInsets.zero,
-          elevation: 2,
+          margin: _cardMargin,
+          elevation: 0,
           shape: RoundedRectangleBorder(
             borderRadius: BorderRadius.circular(12),
+            side: BorderSide(color: Colors.grey.shade300),
           ),
           child: InkWell(
             borderRadius: BorderRadius.circular(10),
@@ -425,137 +483,114 @@ class _PurchaseInvoiceListScreenState
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  // Header Row: Date and Status
+                  // Header Row
                   Row(
                     mainAxisAlignment: MainAxisAlignment.spaceBetween,
                     children: [
                       Text(
-                        DateFormat('dd MMM yy').format(invoice.invoiceDate),
+                        '${(invoice.invoiceNumber != null && invoice.invoiceNumber!.trim().isNotEmpty) ? invoice.invoiceNumber!.trim() : '#${invoice.id}'} • ${DateFormat('dd MMM yy').format(invoice.invoiceDate)}',
                         style: TextStyle(
                           fontSize: 12,
                           color: colorScheme.onSurfaceVariant,
-                        ),
-                      ),
-                      // Payment Status Badge
-                      Container(
-                        padding: const EdgeInsets.symmetric(
-                            horizontal: 8, vertical: 4),
-                        decoration: BoxDecoration(
-                          color: _getStatusColor(invoice),
-                          borderRadius: BorderRadius.circular(12),
-                        ),
-                        child: Text(
-                          _getStatusText(invoice),
-                          style: const TextStyle(
-                            fontSize: 10,
-                            fontWeight: FontWeight.bold,
-                            color: Colors.white,
-                          ),
                         ),
                       ),
                     ],
                   ),
                   const SizedBox(height: 12),
 
-                  // Main Row: Supplier Name, Total Amount, Opening Balance
+                  // Main Row: Supplier and Amount
                   FutureBuilder<Party?>(
                     future: service.getPartyForInvoice(invoice.partyId),
                     builder: (context, snapshot) {
                       final party = snapshot.data;
                       final partyName = party?.name ?? 'Loading...';
 
-                      return Row(
+                      return Column(
                         children: [
-                          // Supplier Name (Left)
-                          Expanded(
-                            flex: 2,
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Text(
-                                  partyName,
-                                  style: const TextStyle(
-                                    fontSize: 13,
-                                    fontWeight: FontWeight.w600,
-                                  ),
-                                  maxLines: 2,
-                                  overflow: TextOverflow.ellipsis,
+                          Row(
+                            children: [
+                              Expanded(
+                                flex: 2,
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Text(
+                                      partyName,
+                                      style: const TextStyle(
+                                        fontSize: 13,
+                                        fontWeight: FontWeight.w600,
+                                      ),
+                                      maxLines: 2,
+                                      overflow: TextOverflow.ellipsis,
+                                    ),
+                                  ],
                                 ),
-                              ],
-                            ),
+                              ),
+                              const SizedBox(width: 8),
+                              Expanded(
+                                flex: 2,
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.center,
+                                  children: [
+                                    Text(
+                                      'Rs ${NumberFormat('#,##0').format(invoice.grandTotal)}',
+                                      style: TextStyle(
+                                        fontSize: 13,
+                                        fontWeight: FontWeight.bold,
+                                        color: Colors.orange.shade700,
+                                      ),
+                                      textAlign: TextAlign.center,
+                                      maxLines: 1,
+                                      overflow: TextOverflow.ellipsis,
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            ],
                           ),
-
-                          const SizedBox(width: 8),
-
-                          // Total Amount and Balance Information
-                          Expanded(
-                            flex: 3,
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.end,
-                              children: [
-                                // Purchase Amount
-                                Text(
-                                  'Purchase: Rs ${NumberFormat('#,##0').format(invoice.grandTotal)}',
-                                  style: const TextStyle(
-                                    fontSize: 12,
-                                    fontWeight: FontWeight.bold,
-                                    color: Colors.black,
-                                  ),
-                                  textAlign: TextAlign.right,
-                                  maxLines: 1,
-                                  overflow: TextOverflow.ellipsis,
+                          const SizedBox(height: 10),
+                          Row(
+                            mainAxisAlignment: MainAxisAlignment.end,
+                            children: [
+                              OutlinedButton.icon(
+                                onPressed: () => _shareInvoiceImage(invoice),
+                                icon: Icon(
+                                  Icons.share,
+                                  size: 16,
+                                  color: Colors.blue.shade700,
                                 ),
-                                const SizedBox(height: 4),
-
-                                // Previous Balance (if any)
-                                if (invoice.previousBalance > 0) ...[
-                                  Text(
-                                    'Previous: Rs ${NumberFormat('#,##0').format(invoice.previousBalance)}',
-                                    style: TextStyle(
-                                      fontSize: 11,
-                                      color: Colors.orange.shade700,
-                                    ),
-                                    textAlign: TextAlign.right,
-                                    maxLines: 1,
-                                    overflow: TextOverflow.ellipsis,
-                                  ),
-                                  const SizedBox(height: 2),
-                                ],
-
-                                // Paid Amount
-                                if (invoice.paidAmount > 0) ...[
-                                  Text(
-                                    'Paid: Rs ${NumberFormat('#,##0').format(invoice.paidAmount)}',
-                                    style: TextStyle(
-                                      fontSize: 11,
-                                      color: Colors.green.shade700,
-                                    ),
-                                    textAlign: TextAlign.right,
-                                    maxLines: 1,
-                                    overflow: TextOverflow.ellipsis,
-                                  ),
-                                  const SizedBox(height: 2),
-                                ],
-
-                                // Remaining Balance
-                                Text(
-                                  'Balance: Rs ${NumberFormat('#,##0').format(invoice.remainingBalance)}',
+                                label: Text(
+                                  'Share',
+                                  style: TextStyle(color: Colors.blue.shade700),
+                                ),
+                                style: OutlinedButton.styleFrom(
+                                  visualDensity: VisualDensity.compact,
+                                  backgroundColor: Colors.blue.shade50,
+                                  side: BorderSide(color: Colors.blue.shade200),
+                                ),
+                              ),
+                              const SizedBox(width: 8),
+                              OutlinedButton.icon(
+                                onPressed: () => _printInvoicePdf(invoice),
+                                icon: Icon(
+                                  Icons.print,
+                                  size: 16,
+                                  color: Colors.deepPurple.shade700,
+                                ),
+                                label: Text(
+                                  'Print',
                                   style: TextStyle(
-                                    fontSize: 12,
-                                    fontWeight: FontWeight.bold,
-                                    color: invoice.remainingBalance > 0
-                                        ? Colors.red.shade700
-                                        : Colors.green.shade700,
-                                  ),
-                                  textAlign: TextAlign.right,
-                                  maxLines: 1,
-                                  overflow: TextOverflow.ellipsis,
+                                      color: Colors.deepPurple.shade700),
                                 ),
-                              ],
-                            ),
+                                style: OutlinedButton.styleFrom(
+                                  visualDensity: VisualDensity.compact,
+                                  backgroundColor: Colors.deepPurple.shade50,
+                                  side: BorderSide(
+                                      color: Colors.deepPurple.shade200),
+                                ),
+                              ),
+                            ],
                           ),
-
-                          const SizedBox(width: 8),
                         ],
                       );
                     },
@@ -565,27 +600,5 @@ class _PurchaseInvoiceListScreenState
             ),
           ),
         ));
-  }
-
-  Color _getStatusColor(Invoice invoice) {
-    final totalPayable = invoice.previousBalance + invoice.grandTotal;
-    if (invoice.paidAmount >= totalPayable) {
-      return Colors.green;
-    } else if (invoice.paidAmount > 0) {
-      return Colors.orange;
-    } else {
-      return Colors.red;
-    }
-  }
-
-  String _getStatusText(Invoice invoice) {
-    final totalPayable = invoice.previousBalance + invoice.grandTotal;
-    if (invoice.paidAmount >= totalPayable) {
-      return 'PAID';
-    } else if (invoice.paidAmount > 0) {
-      return 'PARTIAL';
-    } else {
-      return 'UNPAID';
-    }
   }
 }

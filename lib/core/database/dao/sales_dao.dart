@@ -40,6 +40,60 @@ class SalesDao {
         .findAll();
   }
 
+  Future<String> _ensureUniqueReferenceNo({
+    required int companyId,
+    required TransactionType type,
+    required String referenceNo,
+    int? excludeTransactionId,
+  }) async {
+    final trimmedReference = referenceNo.trim();
+    final baseReference = trimmedReference.isEmpty
+        ? 'SAL-$companyId-${DateTime.now().millisecondsSinceEpoch}'
+        : trimmedReference;
+
+    final existingTransactions = await isar.transactions
+        .filter()
+        .companyIdEqualTo(companyId)
+        .typeEqualTo(type)
+        .findAll();
+
+    final existingReferences = existingTransactions
+        .where((transaction) => transaction.id != excludeTransactionId)
+        .map((transaction) => transaction.referenceNo.trim().toLowerCase())
+        .toSet();
+
+    if (!existingReferences.contains(baseReference.toLowerCase())) {
+      return baseReference;
+    }
+
+    final serialPattern = RegExp(r'^(.*?)-(\d+)$');
+    final match = serialPattern.firstMatch(baseReference);
+
+    if (match != null) {
+      final prefix = match.group(1)!;
+      final serialText = match.group(2)!;
+      var serial = int.tryParse(serialText) ?? 0;
+      final width = serialText.length;
+
+      while (true) {
+        serial += 1;
+        final candidate = '$prefix-${serial.toString().padLeft(width, '0')}';
+        if (!existingReferences.contains(candidate.toLowerCase())) {
+          return candidate;
+        }
+      }
+    }
+
+    var suffix = 2;
+    while (true) {
+      final candidate = '$baseReference-$suffix';
+      if (!existingReferences.contains(candidate.toLowerCase())) {
+        return candidate;
+      }
+      suffix += 1;
+    }
+  }
+
   Future<int> createSaleInvoice({
     required int companyId,
     required Party customer,
@@ -48,12 +102,20 @@ class SalesDao {
     required List<SaleLineInput> lines,
     List<PaymentLineInput>? paymentLines, // NEW: payment lines
     int? userId,
+    String? notes,
+    String? attachmentPath,
   }) async {
+    final uniqueReferenceNo = await _ensureUniqueReferenceNo(
+      companyId: companyId,
+      type: TransactionType.sale,
+      referenceNo: referenceNo,
+    );
+
     final transaction = Transaction()
       ..companyId = companyId
       ..type = TransactionType.sale
       ..date = date
-      ..referenceNo = referenceNo
+      ..referenceNo = uniqueReferenceNo
       ..partyId = customer.id
       ..totalAmount = lines.fold(0.0, (sum, l) => sum + (l.qty * l.rate))
       ..createdByUserId = userId;
@@ -73,7 +135,7 @@ class SalesDao {
           'company_id': companyId,
           'type': 'sale',
           'date': date.toIso8601String(),
-          'reference_no': referenceNo,
+          'reference_no': uniqueReferenceNo,
           'party_id': customer.id,
           'total_amount': transaction.totalAmount,
           'is_posted': false,
@@ -98,12 +160,15 @@ class SalesDao {
         ..partyId = customer.id
         ..invoiceDate = date
         ..grandTotal = transaction.totalAmount
+        ..invoiceNumber = uniqueReferenceNo
         ..status = 'Pending'
         ..previousBalance = currentBalance // Opening balance
         ..paidAmount = totalPayment // Payment on this invoice
         ..remainingBalance = currentBalance +
             transaction.totalAmount -
-            totalPayment; // Closing balance
+            totalPayment // Closing balance
+        ..notes = notes
+        ..attachmentPath = attachmentPath;
 
       final invoiceId = await isar.invoices.put(invoice);
       createdInvoiceId = invoiceId;
@@ -117,10 +182,13 @@ class SalesDao {
         'party_id': customer.id,
         'invoice_date': date.toIso8601String(),
         'grand_total': invoice.grandTotal,
+        'invoice_number': invoice.invoiceNumber,
         'status': invoice.status,
         'previous_balance': invoice.previousBalance,
         'paid_amount': invoice.paidAmount,
         'remaining_balance': invoice.remainingBalance,
+        'notes': invoice.notes,
+        'attachment_path': invoice.attachmentPath,
       });
       final createChange = SyncChange()
         ..companyId = companyId
@@ -209,7 +277,7 @@ class SalesDao {
         customerId: customer.id,
         customerName: customer.name,
         invoiceDate: date,
-        invoiceNo: referenceNo,
+        invoiceNo: uniqueReferenceNo,
         totalAmount: transaction.totalAmount,
       );
 
@@ -219,7 +287,7 @@ class SalesDao {
           companyId: companyId,
           invoiceId: invoiceId,
           saleDate: date,
-          invoiceNo: referenceNo,
+          invoiceNo: uniqueReferenceNo,
           cogsAmount: totalCOGS,
         );
       }
@@ -262,7 +330,7 @@ class SalesDao {
             customerId: customer.id,
             customerName: customer.name,
             paymentDate: paymentDate,
-            invoiceNo: referenceNo,
+            invoiceNo: uniqueReferenceNo,
             amount: paymentLine.amount,
             accountCode: accountCode,
           );
@@ -281,18 +349,26 @@ class SalesDao {
     required List<SaleLineInput> lines,
     List<PaymentLineInput>? paymentLines, // NEW: payment lines
     int? userId,
+    String? notes,
+    String? attachmentPath,
   }) async {
     final invoice = await isar.invoices.get(invoiceId);
     if (invoice == null) throw Exception('Invoice not found');
 
     final transactionId = invoice.transactionId;
+    final uniqueReferenceNo = await _ensureUniqueReferenceNo(
+      companyId: companyId,
+      type: TransactionType.sale,
+      referenceNo: referenceNo,
+      excludeTransactionId: transactionId,
+    );
 
     await isar.writeTxn(() async {
       // Update transaction
       final transaction = await isar.transactions.get(transactionId);
       if (transaction != null) {
         transaction.date = date;
-        transaction.referenceNo = referenceNo;
+        transaction.referenceNo = uniqueReferenceNo;
         transaction.partyId = customer.id;
         transaction.totalAmount =
             lines.fold(0.0, (sum, l) => sum + (l.qty * l.rate));
@@ -307,7 +383,7 @@ class SalesDao {
             'company_id': companyId,
             'type': 'sale',
             'date': date.toIso8601String(),
-            'reference_no': referenceNo,
+            'reference_no': uniqueReferenceNo,
             'party_id': customer.id,
             'total_amount': transaction.totalAmount,
             'is_posted': transaction.isPosted,
@@ -336,11 +412,14 @@ class SalesDao {
       invoice.partyId = customer.id;
       invoice.invoiceDate = date;
       invoice.grandTotal = newTotal;
+      invoice.invoiceNumber = uniqueReferenceNo;
       invoice.previousBalance =
           oldOpeningBalance; // Opening balance before invoice
       invoice.paidAmount = totalPayment; // Payment on this invoice
       invoice.remainingBalance =
           oldOpeningBalance + newTotal - totalPayment; // Closing balance
+      invoice.notes = notes;
+      invoice.attachmentPath = attachmentPath;
       await isar.invoices.put(invoice);
 
       // Record sync change for updated invoice
@@ -352,10 +431,13 @@ class SalesDao {
         'party_id': customer.id,
         'invoice_date': date.toIso8601String(),
         'grand_total': invoice.grandTotal,
+        'invoice_number': invoice.invoiceNumber,
         'status': invoice.status,
         'previous_balance': invoice.previousBalance,
         'paid_amount': invoice.paidAmount,
         'remaining_balance': invoice.remainingBalance,
+        'notes': invoice.notes,
+        'attachment_path': invoice.attachmentPath,
       });
       final updateChange = SyncChange()
         ..companyId = companyId
@@ -478,7 +560,7 @@ class SalesDao {
         customerId: customer.id,
         customerName: customer.name,
         invoiceDate: date,
-        invoiceNo: referenceNo,
+        invoiceNo: uniqueReferenceNo,
         totalAmount: newTotal,
       );
 
@@ -494,7 +576,7 @@ class SalesDao {
           companyId: companyId,
           invoiceId: invoiceId,
           saleDate: date,
-          invoiceNo: referenceNo,
+          invoiceNo: uniqueReferenceNo,
           cogsAmount: totalCOGS,
         );
       }
@@ -537,7 +619,7 @@ class SalesDao {
             customerId: customer.id,
             customerName: customer.name,
             paymentDate: paymentDate,
-            invoiceNo: referenceNo,
+            invoiceNo: uniqueReferenceNo,
             amount: paymentLine.amount,
             accountCode: accountCode,
           );

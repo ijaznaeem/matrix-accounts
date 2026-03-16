@@ -103,7 +103,6 @@ class _SaleReturnListScreenState extends ConsumerState<SaleReturnListScreen> {
     return Scaffold(
       appBar: AppBar(
         title: const Text('Sale Returns'),
-        backgroundColor: colorScheme.inversePrimary,
         actions: [
           IconButton(
             icon: const Icon(Icons.search),
@@ -226,9 +225,10 @@ class _SaleReturnListScreenState extends ConsumerState<SaleReturnListScreen> {
 
                         return Card(
                           margin: const EdgeInsets.only(bottom: 12),
-                          elevation: 2,
+                          elevation: 0,
                           shape: RoundedRectangleBorder(
                             borderRadius: BorderRadius.circular(12),
+                            side: BorderSide(color: Colors.grey.shade300),
                           ),
                           child: InkWell(
                             onTap: () {},
@@ -362,6 +362,8 @@ class _SaleReturnListScreenState extends ConsumerState<SaleReturnListScreen> {
         onPressed: () {
           context.push('/sales/return/form');
         },
+        backgroundColor: colorScheme.primary,
+        foregroundColor: Colors.white,
         icon: const Icon(Icons.add),
         label: const Text('New Return'),
       ),

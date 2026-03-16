@@ -1,6 +1,10 @@
+import 'dart:async';
 import 'dart:convert';
 
+import 'package:cross_file/cross_file.dart';
 import 'package:flutter/foundation.dart';
+import 'package:flutter_cache_manager/flutter_cache_manager.dart';
+import 'package:http/http.dart' as http;
 import 'package:isar/isar.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:uuid/uuid.dart';
@@ -33,6 +37,10 @@ class SyncService {
   static const String _legacySyncVersionKey = 'last_sync_version';
   static const String _appliedOpUuidsPrefix = 'applied_op_uuids_company_';
   static const int _maxStoredAppliedOpUuids = 1000;
+  static const String _appSettingsStorageKey = 'app_settings';
+  static const String _prefetchLimitSettingKey = 'syncAttachmentPrefetchLimit';
+  static const int _defaultAttachmentPrefetchPerPull = 10;
+  static const int _maxAttachmentPrefetchPerPull = 100;
 
   void _logSyncDebug(String message) {
     if (kDebugMode) {
@@ -47,6 +55,37 @@ class SyncService {
       prefs.setString('device_id', id);
     }
     return id;
+  }
+
+  int _getAttachmentPrefetchLimit() {
+    try {
+      final rawSettings = prefs.getString(_appSettingsStorageKey);
+      if (rawSettings == null || rawSettings.trim().isEmpty) {
+        return _defaultAttachmentPrefetchPerPull;
+      }
+
+      final decoded = jsonDecode(rawSettings);
+      if (decoded is! Map) {
+        return _defaultAttachmentPrefetchPerPull;
+      }
+
+      final map = Map<String, dynamic>.from(decoded);
+      final rawLimit = map[_prefetchLimitSettingKey];
+      final parsedLimit = switch (rawLimit) {
+        int value => value,
+        num value => value.toInt(),
+        String value => int.tryParse(value.trim()),
+        _ => null,
+      };
+
+      if (parsedLimit == null) {
+        return _defaultAttachmentPrefetchPerPull;
+      }
+
+      return parsedLimit.clamp(0, _maxAttachmentPrefetchPerPull);
+    } catch (_) {
+      return _defaultAttachmentPrefetchPerPull;
+    }
   }
 
   int _getLastSyncVersionForCompany(int companyId) {
@@ -418,7 +457,10 @@ class SyncService {
       );
     }
 
-    final localChanges = await _getLocalChanges(companyId);
+    final localChanges = await _getLocalChanges(
+      companyId,
+      uploadCompanyId: serverCompanyId,
+    );
     _logSyncDebug(
       'fullSync:localChanges companyId=$companyId count=${localChanges.length}',
     );
@@ -469,6 +511,57 @@ class SyncService {
     _logSyncDebug(
       'fullSync:done companyId=$companyId applied=${(pullResult.changesApplied ?? 0) + (pullAfterPush.changesApplied ?? 0)} finalVersion=${pullAfterPush.currentVersion ?? pushResult.currentVersion}',
     );
+
+    final followUpLocalChanges = await _getLocalChanges(
+      companyId,
+      uploadCompanyId: serverCompanyId,
+    );
+
+    if (followUpLocalChanges.isNotEmpty) {
+      _logSyncDebug(
+        'fullSync:followup-push companyId=$companyId count=${followUpLocalChanges.length}',
+      );
+
+      final followUpPush = await pushChanges(
+        companyId: companyId,
+        serverCompanyId: serverCompanyId,
+        changes: followUpLocalChanges,
+      );
+
+      if (!followUpPush.success) {
+        _logSyncDebug(
+          'fullSync:followup-push failed companyId=$companyId error=${followUpPush.error}',
+        );
+      } else {
+        final followUpVersion = followUpPush.currentVersion;
+        if (followUpVersion != null) {
+          await _setLastSyncVersionForCompany(companyId, followUpVersion);
+        }
+
+        final pullAfterFollowUp = await pullChanges(
+          companyId: companyId,
+          serverCompanyId: serverCompanyId,
+          lastVersionOverride: followUpVersion,
+        );
+
+        if (pullAfterFollowUp.success) {
+          return SyncResult(
+            success: true,
+            changesApplied: (pullResult.changesApplied ?? 0) +
+                (pullAfterPush.changesApplied ?? 0) +
+                (pullAfterFollowUp.changesApplied ?? 0),
+            currentVersion:
+                pullAfterFollowUp.currentVersion ?? followUpPush.currentVersion,
+            conflicts:
+                (pushResult.conflicts ?? 0) + (followUpPush.conflicts ?? 0),
+          );
+        }
+
+        _logSyncDebug(
+          'fullSync:pull-after-followup failed companyId=$companyId error=${pullAfterFollowUp.error}',
+        );
+      }
+    }
 
     return SyncResult(
       success: true,
@@ -585,20 +678,48 @@ class SyncService {
   /// Read all unsynced SyncChange records from Isar and format them
   /// for the /api/sync/push payload.
   /// Only company-scoped records are eligible for sync.
-  Future<List<Map<String, dynamic>>> _getLocalChanges(int companyId) async {
+  Future<List<Map<String, dynamic>>> _getLocalChanges(
+    int companyId, {
+    required int uploadCompanyId,
+  }) async {
     final companyRecords = await _isar.syncChanges
         .filter()
         .companyIdEqualTo(companyId)
         .syncedEqualTo(false)
         .findAll();
 
-    return companyRecords.map((c) {
+    final localChanges = <Map<String, dynamic>>[];
+    for (final c in companyRecords) {
       final decodedData = jsonDecode(c.data);
       final data = decodedData is Map
           ? Map<String, dynamic>.from(decodedData)
           : <String, dynamic>{};
 
-      return {
+      if (c.table == 'invoices' && c.operation != ChangeOperation.delete) {
+        _logSyncDebug(
+          'attachment:inspect-change companyId=$companyId uploadCompanyId=$uploadCompanyId syncChangeId=${c.id} op=${c.operation.name} recordId=${c.recordId} hasAttachment=${data['attachment_path'] != null}',
+        );
+
+        if (c.operation == ChangeOperation.create) {
+          final createAttachmentPath = data['attachment_path']?.toString();
+          if (createAttachmentPath != null &&
+              createAttachmentPath.trim().isNotEmpty &&
+              !_isRemotePath(createAttachmentPath.trim())) {
+            data.remove('attachment_path');
+            _logSyncDebug(
+              'attachment:defer-upload invoiceId=${c.recordId} reason=create-needs-server-id',
+            );
+          }
+        }
+
+        await _maybeUploadInvoiceAttachment(
+          companyId: uploadCompanyId,
+          recordId: c.recordId,
+          data: data,
+        );
+      }
+
+      localChanges.add({
         'local_id': 'local_${c.id}', // stable reference for id_mappings
         'op_uuid': _operationUuidForChange(c),
         'table': c.table,
@@ -606,8 +727,164 @@ class SyncService {
         'operation': _opToString(c.operation),
         'data': data,
         'timestamp': c.createdAt.toIso8601String(),
-      };
-    }).toList();
+      });
+    }
+
+    return localChanges;
+  }
+
+  Future<void> _maybeUploadInvoiceAttachment({
+    required int companyId,
+    required int recordId,
+    required Map<String, dynamic> data,
+  }) async {
+    final rawPath = data['attachment_path']?.toString();
+    if (rawPath == null || rawPath.trim().isEmpty) {
+      _logSyncDebug('attachment:skip-no-path invoiceId=$recordId');
+      return;
+    }
+
+    final path = rawPath.trim();
+    if (_isRemotePath(path)) {
+      _logSyncDebug('attachment:already-remote invoiceId=$recordId path=$path');
+      return;
+    }
+
+    _logSyncDebug(
+      'attachment:upload-attempt invoiceId=$recordId companyId=$companyId localPath=$path',
+    );
+
+    final file = XFile(path);
+    Uint8List bytes;
+    try {
+      bytes = await file.readAsBytes();
+    } catch (_) {
+      _logSyncDebug(
+          'attachment:skip-missing-local-file invoiceId=$recordId path=$path');
+      return;
+    }
+
+    if (bytes.isEmpty) {
+      _logSyncDebug(
+          'attachment:skip-empty-file invoiceId=$recordId path=$path');
+      return;
+    }
+
+    final uploadedPath = await _uploadInvoiceAttachment(
+      companyId: companyId,
+      invoiceId: recordId,
+      bytes: bytes,
+      originalPath: path,
+    );
+
+    if (uploadedPath != null && uploadedPath.isNotEmpty) {
+      data['attachment_path'] = uploadedPath;
+      await _updateInvoiceAttachmentPathLocally(recordId, uploadedPath);
+      _logSyncDebug(
+          'attachment:uploaded invoiceId=$recordId remote=$uploadedPath');
+    }
+  }
+
+  bool _isRemotePath(String path) {
+    final lower = path.toLowerCase();
+    return lower.startsWith('http://') || lower.startsWith('https://');
+  }
+
+  Future<String?> _uploadInvoiceAttachment({
+    required int companyId,
+    required int invoiceId,
+    required Uint8List bytes,
+    required String originalPath,
+  }) async {
+    final request = http.MultipartRequest(
+      'POST',
+      Uri.parse('${apiClient.baseUrl}/api/attachments/invoice/upload'),
+    );
+
+    _logSyncDebug(
+      'attachment:upload-request invoiceId=$invoiceId companyId=$companyId endpoint=${apiClient.baseUrl}/api/attachments/invoice/upload bytes=${bytes.length}',
+    );
+
+    request.headers.addAll({
+      'Accept': 'application/json',
+      if (apiClient.token != null) 'Authorization': 'Bearer ${apiClient.token}',
+      if (apiClient.deviceId != null) 'X-Device-Id': apiClient.deviceId!,
+    });
+
+    request.fields['company_id'] = companyId.toString();
+    request.fields['invoice_id'] = invoiceId.toString();
+    final fallbackName = 'invoice_${invoiceId}_attachment.jpg';
+    final guessedName = Uri.tryParse(originalPath)?.pathSegments.last;
+    final fileName = (guessedName != null && guessedName.isNotEmpty)
+        ? guessedName
+        : fallbackName;
+    request.files
+        .add(http.MultipartFile.fromBytes('file', bytes, filename: fileName));
+
+    try {
+      final streamed = await request.send();
+      final response = await http.Response.fromStream(streamed);
+      if (response.statusCode < 200 || response.statusCode >= 300) {
+        _logSyncDebug(
+            'attachment:upload-failed status=${response.statusCode} body=${response.body}');
+        return null;
+      }
+
+      final decoded = jsonDecode(response.body);
+      if (decoded is Map<String, dynamic> && decoded['success'] == true) {
+        final uploadedPath = decoded['attachment_path']?.toString();
+        _logSyncDebug(
+          'attachment:upload-success invoiceId=$invoiceId remotePath=$uploadedPath',
+        );
+        return uploadedPath;
+      }
+
+      _logSyncDebug(
+        'attachment:upload-invalid-response invoiceId=$invoiceId body=${response.body}',
+      );
+    } catch (e) {
+      _logSyncDebug('attachment:upload-error invoiceId=$invoiceId error=$e');
+    }
+
+    return null;
+  }
+
+  Future<void> _updateInvoiceAttachmentPathLocally(
+    int invoiceId,
+    String remotePath,
+  ) async {
+    await _isar.writeTxn(() async {
+      final invoice = await _isar.invoices.get(invoiceId);
+      if (invoice != null) {
+        invoice.attachmentPath = remotePath;
+        await _isar.invoices.put(invoice);
+      } else {
+        _logSyncDebug(
+          'attachment:update-local-miss invoiceId=$invoiceId remotePath=$remotePath',
+        );
+      }
+
+      final pendingChanges = await _isar.syncChanges
+          .filter()
+          .tableEqualTo('invoices')
+          .recordIdEqualTo(invoiceId)
+          .syncedEqualTo(false)
+          .findAll();
+
+      for (final change in pendingChanges) {
+        final parsed = jsonDecode(change.data);
+        if (parsed is Map) {
+          final map = Map<String, dynamic>.from(parsed);
+          map['attachment_path'] = remotePath;
+          change.data = jsonEncode(map);
+          await _isar.syncChanges.put(change);
+        }
+      }
+
+      _logSyncDebug(
+        'attachment:update-local-done invoiceId=$invoiceId pendingChangesUpdated=${pendingChanges.length} remotePath=$remotePath',
+      );
+    });
   }
 
   String _operationUuidForChange(SyncChange change) {
@@ -650,6 +927,7 @@ class SyncService {
   Future<void> _applyChanges(List<dynamic> changes,
       {int? localCompanyId}) async {
     final parsedChanges = <_ParsedSyncChange>[];
+    final remoteAttachmentUrlsToPrefetch = <String>{};
     final rememberedAppliedOpUuids = localCompanyId != null
         ? _getAppliedOpUuidsForCompany(localCompanyId)
         : <String>{};
@@ -736,6 +1014,16 @@ class SyncService {
         data['id'] = recordId;
       }
 
+      if (table == 'invoices' && operation != 'DELETE') {
+        final rawAttachmentPath = data['attachment_path']?.toString();
+        if (rawAttachmentPath != null) {
+          final attachmentPath = rawAttachmentPath.trim();
+          if (attachmentPath.isNotEmpty && _isRemotePath(attachmentPath)) {
+            remoteAttachmentUrlsToPrefetch.add(attachmentPath);
+          }
+        }
+      }
+
       parsedChanges.add(_ParsedSyncChange(
         table: table,
         operation: operation,
@@ -816,6 +1104,51 @@ class SyncService {
         localCompanyId,
         parsedChanges.map((change) => change.opUuid).whereType<String>(),
       );
+    }
+
+    if (remoteAttachmentUrlsToPrefetch.isNotEmpty) {
+      final prefetchLimit = _getAttachmentPrefetchLimit();
+      if (prefetchLimit <= 0) {
+        _logSyncDebug(
+          'attachment:prefetch-disabled companyId=${localCompanyId ?? '-'}',
+        );
+        return;
+      }
+
+      final totalUrls = remoteAttachmentUrlsToPrefetch.length;
+      final cappedUrls = remoteAttachmentUrlsToPrefetch
+          .take(prefetchLimit)
+          .toList(growable: false);
+      final skipped = totalUrls - cappedUrls.length;
+      if (skipped > 0) {
+        _logSyncDebug(
+          'attachment:prefetch-capped companyId=${localCompanyId ?? '-'} total=$totalUrls prefetching=${cappedUrls.length} skipped=$skipped limit=$prefetchLimit',
+        );
+      }
+
+      unawaited(_prefetchRemoteAttachments(
+        cappedUrls,
+        companyId: localCompanyId,
+      ));
+    }
+  }
+
+  Future<void> _prefetchRemoteAttachments(
+    Iterable<String> urls, {
+    int? companyId,
+  }) async {
+    final cacheManager = DefaultCacheManager();
+    for (final url in urls) {
+      try {
+        await cacheManager.downloadFile(url, key: url);
+        _logSyncDebug(
+          'attachment:prefetch-ok companyId=${companyId ?? '-'} url=$url',
+        );
+      } catch (e) {
+        _logSyncDebug(
+          'attachment:prefetch-failed companyId=${companyId ?? '-'} url=$url error=$e',
+        );
+      }
     }
   }
 
@@ -908,20 +1241,74 @@ class SyncService {
       await _isar.invoices.delete(id);
       return;
     }
-    final invoice = Invoice()
-      ..id = d['id'] as int
-      ..companyId = d['company_id'] as int
-      ..transactionId = d['transaction_id'] as int
-      ..invoiceType = InvoiceType.values.byName(d['invoice_type'] as String)
-      ..partyId = d['party_id'] as int
-      ..invoiceDate = _asDate(d['invoice_date'])
-      ..dueDate = _asDateNullable(d['due_date'])
-      ..grandTotal = _asDouble(d['grand_total'])
-      ..status = d['status'] as String?
-      ..previousBalance = _asDouble(d['previous_balance'])
-      ..paidAmount = _asDouble(d['paid_amount'])
-      ..remainingBalance = _asDouble(d['remaining_balance'])
-      ..invoiceNumber = d['invoice_number'] as String?;
+    final incomingAttachment = d['attachment_path'] as String?;
+    _logSyncDebug(
+      'attachment:apply-invoice op=$op invoiceId=${d['id'] ?? id} hasAttachment=${incomingAttachment != null && incomingAttachment.trim().isNotEmpty} attachment=$incomingAttachment',
+    );
+
+    final resolvedId = _asInt(d['id'], fallback: id);
+    final existing = await _isar.invoices.get(resolvedId);
+    final invoice = existing ?? (Invoice()..id = resolvedId);
+
+    invoice.companyId = d.containsKey('company_id')
+        ? _asInt(d['company_id'], fallback: existing?.companyId ?? 0)
+        : (existing?.companyId ?? 0);
+
+    invoice.transactionId = d.containsKey('transaction_id')
+        ? _asInt(d['transaction_id'], fallback: existing?.transactionId ?? 0)
+        : (existing?.transactionId ?? 0);
+
+    if (d.containsKey('invoice_type')) {
+      final typeName = d['invoice_type']?.toString();
+      if (typeName != null && typeName.isNotEmpty) {
+        invoice.invoiceType = InvoiceType.values.byName(typeName);
+      }
+    } else {
+      invoice.invoiceType = existing?.invoiceType ?? InvoiceType.sale;
+    }
+
+    invoice.partyId = d.containsKey('party_id')
+        ? _asInt(d['party_id'], fallback: existing?.partyId ?? 0)
+        : (existing?.partyId ?? 0);
+
+    invoice.invoiceDate = d.containsKey('invoice_date')
+        ? _asDate(d['invoice_date'])
+        : (existing?.invoiceDate ?? DateTime.now());
+
+    if (d.containsKey('due_date')) {
+      invoice.dueDate = _asDateNullable(d['due_date']);
+    }
+
+    invoice.grandTotal = d.containsKey('grand_total')
+        ? _asDouble(d['grand_total'])
+        : (existing?.grandTotal ?? 0.0);
+
+    if (d.containsKey('status')) {
+      invoice.status = d['status'] as String?;
+    }
+
+    invoice.previousBalance = d.containsKey('previous_balance')
+        ? _asDouble(d['previous_balance'])
+        : (existing?.previousBalance ?? 0.0);
+
+    invoice.paidAmount = d.containsKey('paid_amount')
+        ? _asDouble(d['paid_amount'])
+        : (existing?.paidAmount ?? 0.0);
+
+    invoice.remainingBalance = d.containsKey('remaining_balance')
+        ? _asDouble(d['remaining_balance'])
+        : (existing?.remainingBalance ?? 0.0);
+
+    if (d.containsKey('invoice_number')) {
+      invoice.invoiceNumber = d['invoice_number'] as String?;
+    }
+    if (d.containsKey('notes')) {
+      invoice.notes = d['notes'] as String?;
+    }
+    if (d.containsKey('attachment_path')) {
+      invoice.attachmentPath = d['attachment_path'] as String?;
+    }
+
     await _isar.invoices.put(invoice);
   }
 
@@ -1276,16 +1663,263 @@ class SyncService {
       Map<String, dynamic> idMappings, List<int> syncChangeIds) async {
     if (syncChangeIds.isEmpty) return;
 
+    _logSyncDebug(
+      'idmap:start syncChangeIds=${syncChangeIds.length} mappings=${idMappings.length}',
+    );
+
     await _isar.writeTxn(() async {
       final records = await _isar.syncChanges.getAll(syncChangeIds);
       final toUpdate = records.whereType<SyncChange>().toList();
+      final followUpChanges = <SyncChange>[];
+
       for (final c in toUpdate) {
+        final mappingKey = 'local_${c.id}';
+        final mappedId = _asInt(idMappings[mappingKey], fallback: 0);
+        final oldRecordId = c.recordId;
+
+        if (c.operation == ChangeOperation.create && mappedId <= 0) {
+          _logSyncDebug(
+            'idmap:missing-create-mapping syncChangeId=${c.id} table=${c.table} oldId=$oldRecordId key=$mappingKey',
+          );
+        }
+
+        if (mappedId > 0 &&
+            c.operation == ChangeOperation.create &&
+            oldRecordId > 0 &&
+            oldRecordId != mappedId) {
+          _logSyncDebug(
+            'idmap:apply syncChangeId=${c.id} table=${c.table} oldId=$oldRecordId newId=$mappedId',
+          );
+
+          await _remapLocalRecordId(c.table, oldRecordId, mappedId);
+          await _remapPendingSyncChangeRecordIds(
+              c.table, oldRecordId, mappedId);
+          c.recordId = mappedId;
+
+          final parsed = jsonDecode(c.data);
+          if (parsed is Map) {
+            final dataMap = Map<String, dynamic>.from(parsed);
+            dataMap['id'] = mappedId;
+            c.data = jsonEncode(dataMap);
+          }
+
+          if (c.table == 'invoices') {
+            final invoice = await _isar.invoices.get(mappedId);
+            final attachmentPath = invoice?.attachmentPath?.trim();
+            if (invoice != null &&
+                attachmentPath != null &&
+                attachmentPath.isNotEmpty &&
+                !_isRemotePath(attachmentPath)) {
+              final followUp = SyncChange()
+                ..companyId = c.companyId
+                ..table = 'invoices'
+                ..operation = ChangeOperation.update
+                ..recordId = mappedId
+                ..data = jsonEncode({
+                  'id': mappedId,
+                  'company_id': invoice.companyId,
+                  'attachment_path': attachmentPath,
+                  'notes': invoice.notes,
+                })
+                ..createdAt = DateTime.now()
+                ..synced = false
+                ..deviceId = deviceId;
+              followUpChanges.add(followUp);
+              _logSyncDebug(
+                'attachment:queued-follow-up invoiceId=$mappedId for remote upload',
+              );
+            }
+          }
+        }
+
         c.synced = true;
       }
+
       if (toUpdate.isNotEmpty) {
         await _isar.syncChanges.putAll(toUpdate);
       }
+      if (followUpChanges.isNotEmpty) {
+        await _isar.syncChanges.putAll(followUpChanges);
+      }
+
+      _logSyncDebug(
+        'idmap:done synced=${toUpdate.length} followUpQueued=${followUpChanges.length}',
+      );
     });
+  }
+
+  Future<void> _remapPendingSyncChangeRecordIds(
+    String table,
+    int oldId,
+    int newId,
+  ) async {
+    final pending = await _isar.syncChanges
+        .filter()
+        .tableEqualTo(table)
+        .recordIdEqualTo(oldId)
+        .syncedEqualTo(false)
+        .findAll();
+
+    for (final change in pending) {
+      change.recordId = newId;
+      final parsed = jsonDecode(change.data);
+      if (parsed is Map) {
+        final dataMap = Map<String, dynamic>.from(parsed);
+        if (dataMap['id'] != null) {
+          dataMap['id'] = newId;
+        }
+        change.data = jsonEncode(dataMap);
+      }
+    }
+
+    if (pending.isNotEmpty) {
+      await _isar.syncChanges.putAll(pending);
+    }
+  }
+
+  Future<void> _remapLocalRecordId(String table, int oldId, int newId) async {
+    if (oldId == newId) return;
+
+    _logSyncDebug('idmap:remap-local table=$table oldId=$oldId newId=$newId');
+
+    switch (table) {
+      case 'invoices':
+        final invoice = await _isar.invoices.get(oldId);
+        if (invoice != null) {
+          invoice.id = newId;
+          await _isar.invoices.put(invoice);
+          await _isar.invoices.delete(oldId);
+        }
+
+        final stockByInvoice =
+            await _isar.stockLedgers.filter().invoiceIdEqualTo(oldId).findAll();
+        for (final entry in stockByInvoice) {
+          entry.invoiceId = newId;
+        }
+        if (stockByInvoice.isNotEmpty) {
+          await _isar.stockLedgers.putAll(stockByInvoice);
+        }
+        break;
+
+      case 'transactions':
+        final txn = await _isar.transactions.get(oldId);
+        if (txn != null) {
+          txn.id = newId;
+          await _isar.transactions.put(txn);
+          await _isar.transactions.delete(oldId);
+        }
+
+        final invoices =
+            await _isar.invoices.filter().transactionIdEqualTo(oldId).findAll();
+        for (final invoice in invoices) {
+          invoice.transactionId = newId;
+        }
+        if (invoices.isNotEmpty) {
+          await _isar.invoices.putAll(invoices);
+        }
+
+        final lines = await _isar.transactionLines
+            .filter()
+            .transactionIdEqualTo(oldId)
+            .findAll();
+        for (final line in lines) {
+          line.transactionId = newId;
+        }
+        if (lines.isNotEmpty) {
+          await _isar.transactionLines.putAll(lines);
+        }
+
+        final stockByTxn = await _isar.stockLedgers
+            .filter()
+            .transactionIdEqualTo(oldId)
+            .findAll();
+        for (final entry in stockByTxn) {
+          entry.transactionId = newId;
+        }
+        if (stockByTxn.isNotEmpty) {
+          await _isar.stockLedgers.putAll(stockByTxn);
+        }
+        break;
+
+      case 'payment_ins':
+        final paymentIn = await _isar.paymentIns.get(oldId);
+        if (paymentIn != null) {
+          paymentIn.id = newId;
+          await _isar.paymentIns.put(paymentIn);
+          await _isar.paymentIns.delete(oldId);
+        }
+
+        final inLines = await _isar.paymentInLines
+            .filter()
+            .paymentInIdEqualTo(oldId)
+            .findAll();
+        for (final line in inLines) {
+          line.paymentInId = newId;
+        }
+        if (inLines.isNotEmpty) {
+          await _isar.paymentInLines.putAll(inLines);
+        }
+        break;
+
+      case 'payment_outs':
+        final paymentOut = await _isar.paymentOuts.get(oldId);
+        if (paymentOut != null) {
+          paymentOut.id = newId;
+          await _isar.paymentOuts.put(paymentOut);
+          await _isar.paymentOuts.delete(oldId);
+        }
+
+        final outLines = await _isar.paymentOutLines
+            .filter()
+            .paymentOutIdEqualTo(oldId)
+            .findAll();
+        for (final line in outLines) {
+          line.paymentOutId = newId;
+        }
+        if (outLines.isNotEmpty) {
+          await _isar.paymentOutLines.putAll(outLines);
+        }
+        break;
+
+      case 'parties':
+        final party = await _isar.partys.get(oldId);
+        if (party != null) {
+          party.id = newId;
+          await _isar.partys.put(party);
+          await _isar.partys.delete(oldId);
+        }
+        break;
+
+      case 'products':
+        final product = await _isar.products.get(oldId);
+        if (product != null) {
+          product.id = newId;
+          await _isar.products.put(product);
+          await _isar.products.delete(oldId);
+        }
+        break;
+
+      case 'accounts':
+        final account = await _isar.accounts.get(oldId);
+        if (account != null) {
+          account.id = newId;
+          await _isar.accounts.put(account);
+          await _isar.accounts.delete(oldId);
+        }
+        break;
+
+      case 'payment_accounts':
+        final paymentAccount = await _isar.paymentAccounts.get(oldId);
+        if (paymentAccount != null) {
+          paymentAccount.id = newId;
+          await _isar.paymentAccounts.put(paymentAccount);
+          await _isar.paymentAccounts.delete(oldId);
+        }
+        break;
+
+      default:
+        break;
+    }
   }
 }
 

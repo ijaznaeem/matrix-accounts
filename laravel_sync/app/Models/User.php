@@ -18,6 +18,7 @@ class User extends Authenticatable
         'full_name',
         'role',
         'subscriber_id',
+        'max_companies',
         'password',
         'is_active',
     ];
@@ -30,6 +31,7 @@ class User extends Authenticatable
     protected $casts = [
         'role' => 'string',
         'subscriber_id' => 'integer',
+        'max_companies' => 'integer',
         'is_active' => 'boolean',
         'email_verified_at' => 'datetime',
         'password' => 'hashed',

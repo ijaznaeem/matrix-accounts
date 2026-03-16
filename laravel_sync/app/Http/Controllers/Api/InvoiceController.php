@@ -8,6 +8,7 @@ use App\Models\Transaction;
 use App\Models\TransactionLine;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Validation\Rule;
 
 class InvoiceController extends Controller
 {
@@ -58,13 +59,21 @@ class InvoiceController extends Controller
             'party_id'          => 'required|integer',
             'invoice_date'      => 'required|date',
             'due_date'          => 'nullable|date',
-            'invoice_number'    => 'nullable|string|max:100',
+            'invoice_number'    => [
+                'nullable',
+                'string',
+                'max:100',
+                Rule::unique('invoices', 'invoice_number')
+                    ->where(fn ($query) => $query->where('company_id', (int) $request->input('company_id'))),
+            ],
             'reference_no'      => 'required|string|max:100',
             'previous_balance'  => 'nullable|numeric',
             'paid_amount'       => 'nullable|numeric',
             'remaining_balance' => 'nullable|numeric',
             'grand_total'       => 'required|numeric',
             'status'            => 'nullable|string|max:50',
+            'notes'             => 'nullable|string',
+            'attachment_path'   => 'nullable|string|max:1024',
             'lines'             => 'required|array|min:1',
             'lines.*.product_id' => 'nullable|integer',
             'lines.*.description' => 'nullable|string',
@@ -115,6 +124,8 @@ class InvoiceController extends Controller
                 'paid_amount'       => $data['paid_amount'] ?? 0,
                 'remaining_balance' => $data['remaining_balance'] ?? 0,
                 'invoice_number'    => $data['invoice_number'] ?? null,
+                'notes'             => $data['notes'] ?? null,
+                'attachment_path'   => $data['attachment_path'] ?? null,
             ]);
 
             return $invoice->load('transaction.lines');
@@ -144,7 +155,16 @@ class InvoiceController extends Controller
             'previous_balance'  => 'nullable|numeric',
             'paid_amount'       => 'nullable|numeric',
             'remaining_balance' => 'nullable|numeric',
-            'invoice_number'    => 'nullable|string|max:100',
+            'invoice_number'    => [
+                'nullable',
+                'string',
+                'max:100',
+                Rule::unique('invoices', 'invoice_number')
+                    ->where(fn ($query) => $query->where('company_id', $invoice->company_id))
+                    ->ignore($invoice->id),
+            ],
+            'notes'             => 'nullable|string',
+            'attachment_path'   => 'nullable|string|max:1024',
         ]);
 
         $invoice->update($data);

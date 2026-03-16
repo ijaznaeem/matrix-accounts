@@ -129,13 +129,17 @@ class AuthController extends Controller
 
         if ($adminExists) {
             if (!$actingUser) {
+                if ($requestedRole === 'admin') {
+                    // Allow standalone admin self-registration to create a new tenant.
+                } else {
                 return response()->json([
                     'success' => false,
                     'message' => 'Registration is closed. Contact your admin.',
                 ], 403);
+                }
             }
 
-            if ($actingUser->role !== 'admin') {
+            if ($actingUser && $actingUser->role !== 'admin') {
                 return response()->json([
                     'success' => false,
                     'message' => 'Only admin users can create users.',
@@ -153,11 +157,12 @@ class AuthController extends Controller
             'full_name' => $request->name,
             'role' => $requestedRole,
             'subscriber_id' => $tenantAdminId,
+            'max_companies' => 5,
             'password' => Hash::make($request->password),
             'is_active' => true,
         ]);
 
-        if (!$adminExists && $user->role === 'admin') {
+        if ($user->role === 'admin' && !$user->subscriber_id) {
             $user->subscriber_id = $user->id;
             $user->save();
         }
@@ -173,6 +178,7 @@ class AuthController extends Controller
                 'full_name' => $user->full_name,
                 'role' => $user->role,
                 'subscriber_id' => $user->subscriber_id,
+                'max_companies' => $user->max_companies,
             ],
             'token' => $tokens['access_token'],
             'refresh_token' => $tokens['refresh_token'],

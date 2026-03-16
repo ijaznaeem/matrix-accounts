@@ -1,9 +1,10 @@
 // ignore_for_file: avoid_print
 
+import 'dart:convert';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:shared_preferences/shared_preferences.dart';
-import 'dart:convert';
 
 // App Settings Model
 class AppSettings {
@@ -19,6 +20,7 @@ class AppSettings {
   final String themeColor;
   final bool enableNotifications;
   final bool enableAutoBackup;
+  final int syncAttachmentPrefetchLimit;
   final String taxRate;
   final String invoicePrefix;
   final int invoiceStartNumber;
@@ -36,6 +38,7 @@ class AppSettings {
     this.themeColor = 'blue',
     this.enableNotifications = true,
     this.enableAutoBackup = false,
+    this.syncAttachmentPrefetchLimit = 10,
     this.taxRate = '17.0',
     this.invoicePrefix = 'INV',
     this.invoiceStartNumber = 1001,
@@ -54,6 +57,7 @@ class AppSettings {
     String? themeColor,
     bool? enableNotifications,
     bool? enableAutoBackup,
+    int? syncAttachmentPrefetchLimit,
     String? taxRate,
     String? invoicePrefix,
     int? invoiceStartNumber,
@@ -71,6 +75,8 @@ class AppSettings {
       themeColor: themeColor ?? this.themeColor,
       enableNotifications: enableNotifications ?? this.enableNotifications,
       enableAutoBackup: enableAutoBackup ?? this.enableAutoBackup,
+      syncAttachmentPrefetchLimit:
+          syncAttachmentPrefetchLimit ?? this.syncAttachmentPrefetchLimit,
       taxRate: taxRate ?? this.taxRate,
       invoicePrefix: invoicePrefix ?? this.invoicePrefix,
       invoiceStartNumber: invoiceStartNumber ?? this.invoiceStartNumber,
@@ -90,6 +96,7 @@ class AppSettings {
         'themeColor': themeColor,
         'enableNotifications': enableNotifications,
         'enableAutoBackup': enableAutoBackup,
+        'syncAttachmentPrefetchLimit': syncAttachmentPrefetchLimit,
         'taxRate': taxRate,
         'invoicePrefix': invoicePrefix,
         'invoiceStartNumber': invoiceStartNumber,
@@ -111,6 +118,8 @@ class AppSettings {
       themeColor: json['themeColor'] as String? ?? 'blue',
       enableNotifications: json['enableNotifications'] as bool? ?? true,
       enableAutoBackup: json['enableAutoBackup'] as bool? ?? false,
+      syncAttachmentPrefetchLimit:
+          json['syncAttachmentPrefetchLimit'] as int? ?? 10,
       taxRate: json['taxRate'] as String? ?? '17.0',
       invoicePrefix: json['invoicePrefix'] as String? ?? 'INV',
       invoiceStartNumber: json['invoiceStartNumber'] as int? ?? 1001,
@@ -207,10 +216,12 @@ class SettingsNotifier extends StateNotifier<AppSettings> {
   Future<void> updateSystemSettings({
     bool? notifications,
     bool? autoBackup,
+    int? syncAttachmentPrefetchLimit,
   }) async {
     state = state.copyWith(
       enableNotifications: notifications,
       enableAutoBackup: autoBackup,
+      syncAttachmentPrefetchLimit: syncAttachmentPrefetchLimit,
     );
     await _saveSettings();
   }

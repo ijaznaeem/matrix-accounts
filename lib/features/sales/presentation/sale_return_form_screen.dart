@@ -127,7 +127,7 @@ class _SaleReturnFormScreenState extends ConsumerState<SaleReturnFormScreen> {
               originalQuantity: line.quantity,
               originalUnitPrice: line.unitPrice,
               returnQuantity: 0.0,
-              returnUnitPrice: line.unitPrice,
+              returnUnitPrice: product.salePrice,
             ));
           }
         }

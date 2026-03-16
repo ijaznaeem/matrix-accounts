@@ -2,9 +2,11 @@
 
 import 'dart:io';
 
+import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
+import 'package:image_picker/image_picker.dart';
 import 'package:isar/isar.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:pdf/pdf.dart';
@@ -23,8 +25,7 @@ import '../../../data/models/inventory_models.dart';
 import '../../../data/models/invoice_stock_models.dart';
 import '../../../data/models/party_model.dart';
 import '../../../data/models/payment_models.dart';
-import '../../../data/models/transaction_model.dart'
-    show GetTransactionCollection;
+import '../../../data/models/transaction_model.dart';
 import '../../../data/models/user_model.dart';
 import '../../parties/logic/party_provider.dart' show partyListProvider;
 import '../../parties/presentation/party_form_screen.dart';
@@ -77,8 +78,10 @@ class _PurchaseInvoiceFormScreenState
   Party? _selectedSupplier;
   DateTime _date = DateTime.now();
   final _refNoCtrl = TextEditingController();
+  final _notesCtrl = TextEditingController();
   final _supplierSearchCtrl = TextEditingController();
   final _supplierSearchFocus = FocusNode();
+  String? _attachmentPath;
   final _itemSearchCtrl = TextEditingController();
   final _cashAmountCtrl = TextEditingController();
   final _itemSearchFocus = FocusNode();
@@ -113,7 +116,7 @@ class _PurchaseInvoiceFormScreenState
     if (widget.invoiceId != null) {
       _loadInvoice();
     } else {
-      _refNoCtrl.text = 'PUR-${DateTime.now().millisecondsSinceEpoch}';
+      _initializeNextReferenceNo();
       _addDefaultCashPayment().then((_) {
         if (mounted) {
           setState(() => _isLoading = false);
@@ -121,6 +124,35 @@ class _PurchaseInvoiceFormScreenState
         }
       });
     }
+  }
+
+  Future<void> _initializeNextReferenceNo() async {
+    final company = ref.read(currentCompanyProvider);
+    if (company == null) {
+      _refNoCtrl.text = 'PUR-${DateTime.now().millisecondsSinceEpoch}';
+      return;
+    }
+
+    final prefix = 'PUR-${company.id}-';
+    final isar = ref.read(isarServiceProvider).isar;
+    final purchaseTransactions = await isar.transactions
+        .filter()
+        .companyIdEqualTo(company.id)
+        .typeEqualTo(TransactionType.purchase)
+        .findAll();
+
+    var maxSerial = 0;
+    for (final transaction in purchaseTransactions) {
+      final reference = transaction.referenceNo.trim();
+      if (!reference.startsWith(prefix)) continue;
+      final suffix = reference.substring(prefix.length);
+      final serial = int.tryParse(suffix);
+      if (serial != null && serial > maxSerial) {
+        maxSerial = serial;
+      }
+    }
+
+    _refNoCtrl.text = '$prefix${(maxSerial + 1).toString().padLeft(5, '0')}';
   }
 
   /// Get current supplier balance from accounting ledger
@@ -200,8 +232,8 @@ class _PurchaseInvoiceFormScreenState
       _supplierSearchCtrl.text = supplier.name;
     });
 
-    // Fetch previous unpaid balance
-    final previousBalance = await _getPreviousUnpaidBalance(supplier.id);
+    // Fetch previous balance using the same path as the party list
+    final previousBalance = await _getSupplierBalance(supplier.id);
     setState(() {
       _previousBalance = previousBalance;
     });
@@ -264,8 +296,13 @@ class _PurchaseInvoiceFormScreenState
       final lines = await purchaseDao.getTransactionLines(transaction.id);
       final supplier = await isar.partys.get(invoice.partyId);
 
+      // Fetch live supplier balance (same path as party list)
+      final supplierBalanceOnLoad =
+          supplier != null ? await _getSupplierBalance(supplier.id) : 0.0;
+
       setState(() {
         _selectedSupplier = supplier;
+        _previousBalance = supplierBalanceOnLoad;
         _date = invoice.invoiceDate;
         _refNoCtrl.text = transaction.referenceNo;
         _lines.clear();
@@ -289,6 +326,9 @@ class _PurchaseInvoiceFormScreenState
 
         _paymentLines.clear();
         _loadPaymentLines(invoice.companyId, invoice.id);
+
+        _notesCtrl.text = invoice.notes ?? '';
+        _attachmentPath = invoice.attachmentPath;
 
         _isLoading = false;
       });
@@ -409,6 +449,7 @@ class _PurchaseInvoiceFormScreenState
     for (var controller in _rateControllers.values) {
       controller.dispose();
     }
+    _notesCtrl.dispose();
     super.dispose();
   }
 
@@ -447,6 +488,25 @@ class _PurchaseInvoiceFormScreenState
   /// Trigger recalculation when line items change
   void _onLineItemChanged() {
     _calculateTotalPayable();
+  }
+
+  Future<double> _calculateCurrentStock(
+      Isar isar, int companyId, int productId) async {
+    final product = await isar.collection<Product>().get(productId);
+    if (product == null) return 0;
+
+    final stockMovements = await isar.stockLedgers
+        .filter()
+        .companyIdEqualTo(companyId)
+        .productIdEqualTo(productId)
+        .findAll();
+
+    double currentStock = product.openingQty;
+    for (final movement in stockMovements) {
+      currentStock += movement.quantityDelta;
+    }
+
+    return currentStock;
   }
 
   @override
@@ -636,6 +696,9 @@ class _PurchaseInvoiceFormScreenState
               _buildPaymentLinesSection(),
               SizedBox(
                   height: MediaQuery.of(context).size.width > 600 ? 28 : 20),
+              _buildNotesAndAttachmentSection(),
+              SizedBox(
+                  height: MediaQuery.of(context).size.width > 600 ? 28 : 20),
               Row(
                 children: [
                   Expanded(
@@ -761,6 +824,8 @@ class _PurchaseInvoiceFormScreenState
           lines: inputs,
           paymentLines: paymentInputs,
           userId: user?.id,
+          notes: _notesCtrl.text.trim().isEmpty ? null : _notesCtrl.text.trim(),
+          attachmentPath: _attachmentPath,
         );
 
         if (mounted) {
@@ -783,6 +848,8 @@ class _PurchaseInvoiceFormScreenState
           lines: inputs,
           paymentLines: paymentInputs,
           userId: user?.id,
+          notes: _notesCtrl.text.trim().isEmpty ? null : _notesCtrl.text.trim(),
+          attachmentPath: _attachmentPath,
         );
 
         if (mounted) {
@@ -991,7 +1058,9 @@ class _PurchaseInvoiceFormScreenState
                                   setState(() {
                                     _selectedSupplier = null;
                                     _supplierSearchCtrl.clear();
+                                    _previousBalance = 0;
                                   });
+                                  _calculateTotalPayable();
                                 },
                               )
                             : null,
@@ -1011,14 +1080,18 @@ class _PurchaseInvoiceFormScreenState
                     flex: 1,
                     child: Container(
                       decoration: BoxDecoration(
-                        color: _selectedSupplier!.openingBalance >= 0
-                            ? Colors.green.shade50
-                            : Colors.red.shade50,
+                        color: _previousBalance > 0
+                            ? Colors.red.shade50
+                            : _previousBalance < 0
+                                ? Colors.green.shade50
+                                : Colors.grey.shade100,
                         borderRadius: BorderRadius.circular(8),
                         border: Border.all(
-                          color: _selectedSupplier!.openingBalance >= 0
-                              ? Colors.green.shade200
-                              : Colors.red.shade200,
+                          color: _previousBalance > 0
+                              ? Colors.red.shade200
+                              : _previousBalance < 0
+                                  ? Colors.green.shade200
+                                  : Colors.grey.shade300,
                         ),
                       ),
                       padding: EdgeInsets.symmetric(
@@ -1028,13 +1101,17 @@ class _PurchaseInvoiceFormScreenState
                       child: Row(
                         children: [
                           Icon(
-                            _selectedSupplier!.openingBalance >= 0
-                                ? Icons.account_balance_wallet
-                                : Icons.warning,
+                            _previousBalance > 0
+                                ? Icons.warning
+                                : _previousBalance < 0
+                                    ? Icons.account_balance_wallet
+                                    : Icons.balance,
                             size: isTablet ? 18 : 16,
-                            color: _selectedSupplier!.openingBalance >= 0
-                                ? Colors.green.shade600
-                                : Colors.red.shade600,
+                            color: _previousBalance > 0
+                                ? Colors.red.shade600
+                                : _previousBalance < 0
+                                    ? Colors.green.shade600
+                                    : Colors.grey.shade600,
                           ),
                           SizedBox(width: isTablet ? 8 : 4),
                           Expanded(
@@ -1042,7 +1119,7 @@ class _PurchaseInvoiceFormScreenState
                               crossAxisAlignment: CrossAxisAlignment.start,
                               children: [
                                 Text(
-                                  'Opening Balance',
+                                  'Live Balance',
                                   style: TextStyle(
                                     fontSize: isTablet ? 10 : 9,
                                     color: Colors.grey.shade600,
@@ -1050,16 +1127,19 @@ class _PurchaseInvoiceFormScreenState
                                   ),
                                 ),
                                 Text(
-                                  _selectedSupplier!.openingBalance >= 0
-                                      ? 'Opening Credit: Rs ${_selectedSupplier!.openingBalance.toStringAsFixed(0)}'
-                                      : 'Opening Due: Rs ${_selectedSupplier!.openingBalance.abs().toStringAsFixed(0)}',
+                                  _previousBalance > 0
+                                      ? 'Receivable: Rs ${_previousBalance.abs().toStringAsFixed(0)}'
+                                      : _previousBalance < 0
+                                          ? 'Credit: Rs ${_previousBalance.abs().toStringAsFixed(0)}'
+                                          : 'Cleared: Rs 0',
                                   style: TextStyle(
                                     fontSize: isTablet ? 14 : 12,
                                     fontWeight: FontWeight.w700,
-                                    color:
-                                        _selectedSupplier!.openingBalance >= 0
+                                    color: _previousBalance > 0
+                                        ? Colors.red.shade700
+                                        : _previousBalance < 0
                                             ? Colors.green.shade700
-                                            : Colors.red.shade700,
+                                            : Colors.grey.shade700,
                                   ),
                                 ),
                               ],
@@ -1196,14 +1276,18 @@ class _PurchaseInvoiceFormScreenState
                                 }
 
                                 return Text(
-                                  balance >= 0
-                                      ? 'Credit: Rs ${balance.toStringAsFixed(2)}'
-                                      : 'Due: Rs ${balance.abs().toStringAsFixed(2)}',
+                                  balance > 0
+                                      ? 'Receivable: Rs ${balance.abs().toStringAsFixed(2)}'
+                                      : balance < 0
+                                          ? 'Credit: Rs ${balance.abs().toStringAsFixed(2)}'
+                                          : 'Cleared: Rs 0.00',
                                   style: TextStyle(
                                     fontSize: isTablet ? 11 : 10,
-                                    color: balance >= 0
-                                        ? Colors.green.shade600
-                                        : Colors.red.shade600,
+                                    color: balance > 0
+                                        ? Colors.red.shade600
+                                        : balance < 0
+                                            ? Colors.green.shade600
+                                            : Colors.grey.shade600,
                                   ),
                                 );
                               },
@@ -1589,14 +1673,31 @@ class _PurchaseInvoiceFormScreenState
                               subtitle: Column(
                                 crossAxisAlignment: CrossAxisAlignment.start,
                                 children: [
-                                  if (product.sku.isNotEmpty)
-                                    Text(
-                                      'SKU: ${product.sku}',
-                                      style: TextStyle(
-                                        fontSize: isTablet ? 10 : 9,
-                                        color: Colors.grey.shade500,
-                                      ),
+                                  FutureBuilder<double>(
+                                    future: _calculateCurrentStock(
+                                      ref.read(isarServiceProvider).isar,
+                                      ref.read(currentCompanyProvider)?.id ?? 0,
+                                      product.id,
                                     ),
+                                    builder: (context, snap) {
+                                      final stock =
+                                          snap.data ?? product.openingQty;
+                                      final color = stock <= 0
+                                          ? Colors.red.shade600
+                                          : stock < 5
+                                              ? Colors.orange.shade700
+                                              : Colors.green.shade700;
+
+                                      return Text(
+                                        'Stock: ${stock.toStringAsFixed(1)}',
+                                        style: TextStyle(
+                                          fontSize: isTablet ? 10 : 9,
+                                          fontWeight: FontWeight.w500,
+                                          color: color,
+                                        ),
+                                      );
+                                    },
+                                  ),
                                 ],
                               ),
                               onTap: () {
@@ -2421,60 +2522,10 @@ class _PurchaseInvoiceFormScreenState
         return;
       }
 
-      final transaction =
-          await purchaseDao.getTransactionForInvoice(invoice.id);
-      if (transaction == null) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Transaction not found'),
-            backgroundColor: Colors.red,
-          ),
-        );
-        return;
-      }
-
-      // Prepare line items
-      final lineItems = <Map<String, dynamic>>[];
-      for (final line in validLines) {
-        final product = line.productId != null
-            ? await isar.products.get(line.productId!)
-            : null;
-        lineItems.add({
-          'productName': product?.name ?? line.productName ?? 'Unknown Product',
-          'qty': line.qty,
-          'rate': line.rate,
-        });
-      }
-
-      // Prepare payment lines
-      final paymentDetails = <Map<String, dynamic>>[];
-      final validPaymentLines = _paymentLines
-          .where((p) => p.accountId != null && p.amount > 0)
-          .toList();
-
-      for (final payLine in validPaymentLines) {
-        if (payLine.accountId != null) {
-          final account = await isar.accounts.get(payLine.accountId!);
-          paymentDetails.add({
-            'accountName': account?.name ?? payLine.accountName ?? 'Unknown',
-            'amount': payLine.amount,
-          });
-        }
-      }
-
-      // Calculate the current supplier balance
-      final supplierBalance = await _getSupplierBalance(_selectedSupplier!.id);
-
-      // Generate and share the image
-      await PurchaseInvoiceGenerator.shareAsImage(
+      await PurchaseInvoiceGenerator.shareExistingAsImage(
+        invoiceId: invoice.id,
+        isar: isar,
         company: company,
-        supplier: _selectedSupplier!,
-        invoice: invoice,
-        transaction: transaction,
-        lineItems: lineItems,
-        paymentLines: paymentDetails.isNotEmpty ? paymentDetails : null,
-        supplierBalance: supplierBalance,
-        openingBalance: _selectedSupplier!.openingBalance,
       );
 
       if (mounted) {
@@ -2698,20 +2749,12 @@ class _PurchaseInvoiceFormScreenState
     if (widget.invoiceId == null) return;
 
     try {
-      // Get the invoice data
-      final invoiceData = await _getInvoiceData(company);
-      if (invoiceData == null) return;
-
-      final imageBytes =
-          await PurchaseInvoiceGenerator.generatePurchaseInvoiceImage(
+      if (widget.invoiceId == null) return;
+      final isar = ref.read(isarServiceProvider).isar;
+      final imageBytes = await PurchaseInvoiceGenerator.buildImageById(
+        invoiceId: widget.invoiceId!,
+        isar: isar,
         company: company,
-        supplier: invoiceData['supplier'],
-        invoice: invoiceData['invoice'],
-        transaction: invoiceData['transaction'],
-        lineItems: invoiceData['lineItems'],
-        paymentLines: invoiceData['paymentDetails'],
-        supplierBalance: invoiceData['supplierBalance'],
-        openingBalance: invoiceData['openingBalance'],
       );
 
       final memoryImage = pw.MemoryImage(imageBytes);
@@ -2738,201 +2781,6 @@ class _PurchaseInvoiceFormScreenState
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text('Error sharing PDF: $e'),
-            backgroundColor: Colors.red,
-          ),
-        );
-      }
-    }
-  }
-
-  Future<Map<String, dynamic>?> _getInvoiceData(Company company) async {
-    // Get the invoice using Isar
-    final isarService = ref.read(isarServiceProvider);
-    final isar = isarService.isar;
-    final purchaseDao = PurchaseDao(isar);
-
-    // Fetch the invoice
-    final invoice = await isar.invoices.get(widget.invoiceId!);
-    if (invoice == null) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Invoice not found'),
-            backgroundColor: Colors.red,
-          ),
-        );
-      }
-      return null;
-    }
-
-    // Get the supplier
-    final supplier = await isar.partys.get(invoice.partyId);
-    if (supplier == null) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Supplier not found'),
-            backgroundColor: Colors.red,
-          ),
-        );
-      }
-      return null;
-    }
-
-    // Get transaction
-    final transaction = await isar.transactions.get(invoice.transactionId);
-    if (transaction == null) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Transaction not found'),
-            backgroundColor: Colors.red,
-          ),
-        );
-      }
-      return null;
-    }
-
-    // Get transaction lines
-    final transactionLines =
-        await purchaseDao.getTransactionLines(transaction.id);
-
-    // Prepare line items with product names
-    final lineItems = <Map<String, dynamic>>[];
-    for (final txLine in transactionLines) {
-      if (txLine.productId != null) {
-        final product = await isar.products.get(txLine.productId!);
-        lineItems.add({
-          'productName': product?.name ?? 'Unknown',
-          'qty': txLine.quantity,
-          'rate': txLine.unitPrice,
-        });
-      }
-    }
-
-    // Get payment details - set to null for now
-    List<Map<String, dynamic>>? paymentDetails = null;
-
-    // Calculate supplier current balance
-    final partyDao = PartyDao(isar);
-    final supplierBalance = await partyDao.getPartyBalance(
-      partyId: supplier.id,
-      companyId: company.id,
-    );
-
-    // Get opening balance
-    final openingBalance = supplier.openingBalance;
-
-    return {
-      'invoice': invoice,
-      'supplier': supplier,
-      'transaction': transaction,
-      'lineItems': lineItems,
-      'paymentDetails': paymentDetails,
-      'supplierBalance': supplierBalance,
-      'openingBalance': openingBalance,
-    };
-  }
-
-  Future<void> _shareExistingInvoice(Company company) async {
-    if (widget.invoiceId == null) return;
-
-    try {
-      // Get the invoice using Isar
-      final isarService = ref.read(isarServiceProvider);
-      final isar = isarService.isar;
-      final purchaseDao = PurchaseDao(isar);
-
-      // Fetch the invoice
-      final invoice = await isar.invoices.get(widget.invoiceId!);
-      if (invoice == null) {
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-              content: Text('Invoice not found'),
-              backgroundColor: Colors.red,
-            ),
-          );
-        }
-        return;
-      }
-
-      // Get the supplier
-      final supplier = await isar.partys.get(invoice.partyId);
-      if (supplier == null) {
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-              content: Text('Supplier not found'),
-              backgroundColor: Colors.red,
-            ),
-          );
-        }
-        return;
-      }
-
-      // Get transaction
-      final transaction = await isar.transactions.get(invoice.transactionId);
-      if (transaction == null) {
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-              content: Text('Transaction not found'),
-              backgroundColor: Colors.red,
-            ),
-          );
-        }
-        return;
-      }
-
-      // Get transaction lines
-      final transactionLines =
-          await purchaseDao.getTransactionLines(transaction.id);
-
-      // Prepare line items with product names
-      final lineItems = <Map<String, dynamic>>[];
-      for (final txLine in transactionLines) {
-        if (txLine.productId != null) {
-          final product = await isar.products.get(txLine.productId!);
-          lineItems.add({
-            'productName': product?.name ?? 'Unknown',
-            'qty': txLine.quantity,
-            'rate': txLine.unitPrice,
-          });
-        }
-      }
-
-      // Get payment details - set to null for now
-      List<Map<String, dynamic>>? paymentDetails = null;
-
-      // Calculate supplier current balance
-      final partyDao = PartyDao(isar);
-      final supplierBalance = await partyDao.getPartyBalance(
-        partyId: supplier.id,
-        companyId: company.id,
-      );
-
-      // Get opening balance
-      final openingBalance = supplier.openingBalance;
-
-      // Call purchase invoice generator
-      await PurchaseInvoiceGenerator.sharePurchaseInvoice(
-        context: context,
-        company: company,
-        supplier: supplier,
-        invoice: invoice,
-        transaction: transaction,
-        lineItems: lineItems,
-        paymentLines: paymentDetails,
-        supplierBalance: supplierBalance,
-        openingBalance: openingBalance,
-      );
-    } catch (e) {
-      print('Error sharing invoice: $e');
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Error sharing invoice: $e'),
             backgroundColor: Colors.red,
           ),
         );
@@ -3064,9 +2912,8 @@ class _PurchaseInvoiceFormScreenState
         }
       }
 
-      // Calculate supplier balances
-      final supplierBalance = await _getSupplierBalance(supplier.id);
-      final openingBalance = supplier.openingBalance;
+      // Use balance snapshot saved on invoice
+      final openingBalance = invoice.previousBalance;
 
       if (mounted) Navigator.pop(context); // Close loading dialog
 
@@ -3117,8 +2964,10 @@ class _PurchaseInvoiceFormScreenState
         transaction: transaction,
         lineItems: lineItems,
         paymentLines: paymentDetails,
-        supplierBalance: supplierBalance,
+        supplierBalance: null,
         openingBalance: openingBalance,
+        notes: invoice.notes,
+        attachmentImagePath: invoice.attachmentPath,
       );
 
       // Save image to temporary directory
@@ -3155,7 +3004,7 @@ class _PurchaseInvoiceFormScreenState
 💰 Total Amount: Rs ${totalToUse.toStringAsFixed(2)}
 💳 Paid Amount: Rs ${totalPaidAmount.toStringAsFixed(2)}
 ⚖️ Balance Amount: Rs ${(totalToUse - totalPaidAmount).toStringAsFixed(2)}
-${'\n📊 Current Balance: Rs ${supplierBalance.toStringAsFixed(2)}'}''',
+      📊 Previous Balance: Rs ${openingBalance.toStringAsFixed(2)}''',
       );
 
       // Also share the detailed invoice image
@@ -3253,6 +3102,266 @@ ${'\n📊 Current Balance: Rs ${supplierBalance.toStringAsFixed(2)}'}''',
         );
       }
       print('Error sharing to WhatsApp: $e');
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Notes & Attachment section
+  // ---------------------------------------------------------------------------
+
+  Widget _buildNotesAndAttachmentSection() {
+    final isTablet = MediaQuery.of(context).size.width > 600;
+    final fontSize = isTablet ? 16.0 : 14.0;
+
+    Widget buildAttachmentPreview(String path) {
+      final normalizedPath = path.trim();
+      final isRemote = normalizedPath.startsWith('http://') ||
+          normalizedPath.startsWith('https://');
+
+      if (isRemote) {
+        return CachedNetworkImage(
+          imageUrl: normalizedPath,
+          width: double.infinity,
+          height: isTablet ? 220 : 180,
+          fit: BoxFit.cover,
+          placeholder: (_, __) => Container(
+            width: double.infinity,
+            height: isTablet ? 220 : 180,
+            color: Colors.grey.shade200,
+            alignment: Alignment.center,
+            child: const CircularProgressIndicator(),
+          ),
+          errorWidget: (_, __, ___) => Container(
+            width: double.infinity,
+            height: isTablet ? 220 : 180,
+            color: Colors.grey.shade200,
+            alignment: Alignment.center,
+            child: const Icon(Icons.broken_image, color: Colors.grey),
+          ),
+        );
+      }
+
+      final localFile = File(normalizedPath);
+      if (localFile.existsSync()) {
+        return Image.file(
+          localFile,
+          width: double.infinity,
+          height: isTablet ? 220 : 180,
+          fit: BoxFit.cover,
+        );
+      }
+
+      return Container(
+        width: double.infinity,
+        height: isTablet ? 220 : 180,
+        color: Colors.grey.shade200,
+        alignment: Alignment.center,
+        child: const Icon(Icons.image_not_supported, color: Colors.grey),
+      );
+    }
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        // ── Notes ────────────────────────────────────────────────────────────
+        Text(
+          'Notes',
+          style: TextStyle(
+            fontSize: fontSize,
+            fontWeight: FontWeight.w600,
+            color: Colors.grey.shade900,
+          ),
+        ),
+        SizedBox(height: isTablet ? 10 : 8),
+        Container(
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(12),
+            color: Colors.grey.shade50,
+            border: Border.all(color: Colors.grey.shade300),
+          ),
+          child: TextField(
+            controller: _notesCtrl,
+            maxLines: 4,
+            keyboardType: TextInputType.multiline,
+            textInputAction: TextInputAction.newline,
+            style: TextStyle(
+              fontSize: isTablet ? 15 : 13,
+              color: Colors.grey.shade900,
+            ),
+            decoration: InputDecoration(
+              hintText: 'Add notes or remarks for this invoice…',
+              hintStyle: TextStyle(
+                color: Colors.grey.shade400,
+                fontSize: isTablet ? 14 : 12,
+              ),
+              border: InputBorder.none,
+              contentPadding: EdgeInsets.all(isTablet ? 14 : 12),
+            ),
+          ),
+        ),
+
+        SizedBox(height: isTablet ? 20 : 16),
+
+        // ── Attachment ───────────────────────────────────────────────────────
+        Row(
+          children: [
+            Text(
+              'Attachment',
+              style: TextStyle(
+                fontSize: fontSize,
+                fontWeight: FontWeight.w600,
+                color: Colors.grey.shade900,
+              ),
+            ),
+            const SizedBox(width: 6),
+            Text(
+              '(optional image)',
+              style: TextStyle(
+                fontSize: isTablet ? 12 : 10,
+                color: Colors.grey.shade500,
+              ),
+            ),
+          ],
+        ),
+        SizedBox(height: isTablet ? 10 : 8),
+
+        if (_attachmentPath != null && _attachmentPath!.trim().isNotEmpty) ...[
+          // Preview of selected image
+          Stack(
+            children: [
+              ClipRRect(
+                borderRadius: BorderRadius.circular(12),
+                child: buildAttachmentPreview(_attachmentPath!),
+              ),
+              Positioned(
+                top: 8,
+                right: 8,
+                child: GestureDetector(
+                  onTap: () => setState(() => _attachmentPath = null),
+                  child: Container(
+                    decoration: BoxDecoration(
+                      color: Colors.black54,
+                      borderRadius: BorderRadius.circular(20),
+                    ),
+                    padding: const EdgeInsets.all(6),
+                    child:
+                        const Icon(Icons.close, color: Colors.white, size: 18),
+                  ),
+                ),
+              ),
+              Positioned(
+                bottom: 8,
+                right: 8,
+                child: GestureDetector(
+                  onTap: _pickAttachmentImage,
+                  child: Container(
+                    decoration: BoxDecoration(
+                      color: Colors.blue.shade600,
+                      borderRadius: BorderRadius.circular(20),
+                    ),
+                    padding: const EdgeInsets.all(6),
+                    child:
+                        const Icon(Icons.edit, color: Colors.white, size: 16),
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ] else ...[
+          // Pick-image button
+          InkWell(
+            onTap: _pickAttachmentImage,
+            borderRadius: BorderRadius.circular(12),
+            child: Container(
+              width: double.infinity,
+              height: isTablet ? 120 : 100,
+              decoration: BoxDecoration(
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(
+                  color: Colors.blue.shade200,
+                  width: 1.5,
+                  style: BorderStyle.solid,
+                ),
+                color: Colors.blue.shade50,
+              ),
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Icon(
+                    Icons.add_photo_alternate_outlined,
+                    size: isTablet ? 36 : 30,
+                    color: Colors.blue.shade400,
+                  ),
+                  SizedBox(height: isTablet ? 8 : 6),
+                  Text(
+                    'Tap to add image',
+                    style: TextStyle(
+                      fontSize: isTablet ? 13 : 11,
+                      color: Colors.blue.shade600,
+                      fontWeight: FontWeight.w500,
+                    ),
+                  ),
+                  Text(
+                    'Camera or Gallery',
+                    style: TextStyle(
+                      fontSize: isTablet ? 11 : 9,
+                      color: Colors.blue.shade400,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ],
+      ],
+    );
+  }
+
+  /// Opens a bottom-sheet to let the user pick an image from camera or gallery.
+  Future<void> _pickAttachmentImage() async {
+    final source = await showModalBottomSheet<ImageSource>(
+      context: context,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (context) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const SizedBox(height: 12),
+            const Text(
+              'Select Image Source',
+              style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
+            ),
+            const SizedBox(height: 8),
+            ListTile(
+              leading: const Icon(Icons.camera_alt, color: Colors.orange),
+              title: const Text('Camera'),
+              onTap: () => Navigator.pop(context, ImageSource.camera),
+            ),
+            ListTile(
+              leading: const Icon(Icons.photo_library, color: Colors.orange),
+              title: const Text('Gallery'),
+              onTap: () => Navigator.pop(context, ImageSource.gallery),
+            ),
+            const SizedBox(height: 8),
+          ],
+        ),
+      ),
+    );
+
+    if (source == null) return;
+
+    final picker = ImagePicker();
+    final picked = await picker.pickImage(
+      source: source,
+      imageQuality: 85,
+      maxWidth: 1600,
+      maxHeight: 1600,
+    );
+
+    if (picked != null && mounted) {
+      setState(() => _attachmentPath = picked.path);
     }
   }
 }

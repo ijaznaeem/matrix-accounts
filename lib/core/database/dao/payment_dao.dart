@@ -6,13 +6,16 @@ import '../../../data/models/party_model.dart';
 import '../../../data/models/payment_models.dart';
 import '../../../data/models/sync_change_model.dart';
 import 'account_dao.dart';
+import 'party_dao.dart';
 
 class PaymentDao {
   final Isar isar;
   late final AccountDao _accountDao;
+  late final PartyDao _partyDao;
 
   PaymentDao(this.isar) {
     _accountDao = AccountDao(isar);
+    _partyDao = PartyDao(isar);
   }
 
   // Payment Account Methods
@@ -259,18 +262,21 @@ class PaymentDao {
         .findAll();
   }
 
-  Future<void> createPaymentIn({
+  Future<PaymentIn> createPaymentIn({
     required int companyId,
     required Party customer,
     required DateTime receiptDate,
     required String receiptNo,
+    required double previousBalance,
     required List<PaymentLineInput> lines,
     String? description,
     String? attachmentPath,
     int? userId,
   }) async {
+    late final PaymentIn createdPayment;
     await isar.writeTxn(() async {
       final totalAmount = lines.fold(0.0, (sum, l) => sum + l.amount);
+      final remainingBalance = previousBalance - totalAmount;
 
       final payment = PaymentIn()
         ..companyId = companyId
@@ -278,12 +284,15 @@ class PaymentDao {
         ..receiptDate = receiptDate
         ..partyId = customer.id
         ..totalAmount = totalAmount
+        ..previousBalance = previousBalance
+        ..remainingBalance = remainingBalance
         ..description = description
         ..attachmentPath = attachmentPath
         ..createdAt = DateTime.now()
         ..createdByUserId = userId;
 
       final paymentId = await isar.paymentIns.put(payment);
+      createdPayment = payment;
 
       // Record sync change for created PaymentIn
       await isar.syncChanges.put(SyncChange()
@@ -298,7 +307,12 @@ class PaymentDao {
           'receipt_date': receiptDate.toIso8601String(),
           'party_id': customer.id,
           'total_amount': totalAmount,
+          'previous_balance': previousBalance,
+          'remaining_balance': remainingBalance,
           'description': description,
+          'attachment_path': attachmentPath,
+          'created_at': payment.createdAt.toIso8601String(),
+          'created_by_user_id': userId,
         })
         ..createdAt = DateTime.now()
         ..synced = false);
@@ -345,34 +359,64 @@ class PaymentDao {
         }
       }
     });
+
+    return createdPayment;
   }
 
-  Future<void> updatePaymentIn({
+  Future<PaymentIn?> updatePaymentIn({
     required int paymentInId,
     required int companyId,
     required Party customer,
     required DateTime receiptDate,
     required String receiptNo,
+    required double previousBalance,
     required List<PaymentLineInput> lines,
     String? description,
     String? attachmentPath,
     int? userId,
   }) async {
+    PaymentIn? updatedPayment;
     await isar.writeTxn(() async {
       final payment = await isar.paymentIns.get(paymentInId);
       if (payment == null) return;
 
       final totalAmount = lines.fold(0.0, (sum, l) => sum + l.amount);
+      final remainingBalance = previousBalance - totalAmount;
 
       payment.receiptNo = receiptNo;
       payment.receiptDate = receiptDate;
       payment.partyId = customer.id;
       payment.totalAmount = totalAmount;
+      payment.previousBalance = previousBalance;
+      payment.remainingBalance = remainingBalance;
       payment.description = description;
       payment.attachmentPath = attachmentPath;
       payment.updatedAt = DateTime.now();
 
       await isar.paymentIns.put(payment);
+      updatedPayment = payment;
+
+      await isar.syncChanges.put(SyncChange()
+        ..companyId = companyId
+        ..table = 'payment_ins'
+        ..operation = ChangeOperation.update
+        ..recordId = paymentInId
+        ..data = jsonEncode({
+          'id': paymentInId,
+          'company_id': companyId,
+          'receipt_no': receiptNo,
+          'receipt_date': receiptDate.toIso8601String(),
+          'party_id': customer.id,
+          'total_amount': totalAmount,
+          'previous_balance': previousBalance,
+          'remaining_balance': remainingBalance,
+          'description': description,
+          'attachment_path': attachmentPath,
+          'created_at': payment.createdAt.toIso8601String(),
+          'created_by_user_id': payment.createdByUserId,
+        })
+        ..createdAt = DateTime.now()
+        ..synced = false);
 
       // Delete old lines
       final oldLines = await isar.paymentInLines
@@ -422,6 +466,8 @@ class PaymentDao {
         }
       }
     });
+
+    return updatedPayment;
   }
 
   Future<void> deletePaymentIn(int paymentInId) async {
@@ -465,6 +511,13 @@ class PaymentDao {
     return payments.fold<double>(0.0, (sum, p) => sum + p.totalAmount);
   }
 
+  Future<double> getPartyLiveBalance(int partyId, int companyId) async {
+    return _partyDao.getPartyBalance(
+      partyId: partyId,
+      companyId: companyId,
+    );
+  }
+
   // Payment Out Methods
   Future<List<PaymentOut>> getPaymentOuts(int companyId) async {
     return await isar.paymentOuts
@@ -485,18 +538,21 @@ class PaymentDao {
         .findAll();
   }
 
-  Future<void> createPaymentOut({
+  Future<PaymentOut> createPaymentOut({
     required int companyId,
     required Party supplier,
     required DateTime voucherDate,
     required String voucherNo,
+    required double previousBalance,
     required List<PaymentLineInput> lines,
     String? description,
     String? attachmentPath,
     int? userId,
   }) async {
+    late final PaymentOut createdPayment;
     await isar.writeTxn(() async {
       final totalAmount = lines.fold(0.0, (sum, l) => sum + l.amount);
+      final remainingBalance = previousBalance - totalAmount;
 
       final payment = PaymentOut()
         ..companyId = companyId
@@ -504,12 +560,15 @@ class PaymentDao {
         ..voucherDate = voucherDate
         ..partyId = supplier.id
         ..totalAmount = totalAmount
+        ..previousBalance = previousBalance
+        ..remainingBalance = remainingBalance
         ..description = description
         ..attachmentPath = attachmentPath
         ..createdAt = DateTime.now()
         ..createdByUserId = userId;
 
       final paymentId = await isar.paymentOuts.put(payment);
+      createdPayment = payment;
 
       // Record sync change for created PaymentOut
       await isar.syncChanges.put(SyncChange()
@@ -524,7 +583,12 @@ class PaymentDao {
           'voucher_date': voucherDate.toIso8601String(),
           'party_id': supplier.id,
           'total_amount': totalAmount,
+          'previous_balance': previousBalance,
+          'remaining_balance': remainingBalance,
           'description': description,
+          'attachment_path': attachmentPath,
+          'created_at': payment.createdAt.toIso8601String(),
+          'created_by_user_id': userId,
         })
         ..createdAt = DateTime.now()
         ..synced = false);
@@ -571,34 +635,64 @@ class PaymentDao {
         }
       }
     });
+
+    return createdPayment;
   }
 
-  Future<void> updatePaymentOut({
+  Future<PaymentOut?> updatePaymentOut({
     required int paymentOutId,
     required int companyId,
     required Party supplier,
     required DateTime voucherDate,
     required String voucherNo,
+    required double previousBalance,
     required List<PaymentLineInput> lines,
     String? description,
     String? attachmentPath,
     int? userId,
   }) async {
+    PaymentOut? updatedPayment;
     await isar.writeTxn(() async {
       final payment = await isar.paymentOuts.get(paymentOutId);
       if (payment == null) return;
 
       final totalAmount = lines.fold(0.0, (sum, l) => sum + l.amount);
+      final remainingBalance = previousBalance - totalAmount;
 
       payment.voucherNo = voucherNo;
       payment.voucherDate = voucherDate;
       payment.partyId = supplier.id;
       payment.totalAmount = totalAmount;
+      payment.previousBalance = previousBalance;
+      payment.remainingBalance = remainingBalance;
       payment.description = description;
       payment.attachmentPath = attachmentPath;
       payment.updatedAt = DateTime.now();
 
       await isar.paymentOuts.put(payment);
+      updatedPayment = payment;
+
+      await isar.syncChanges.put(SyncChange()
+        ..companyId = companyId
+        ..table = 'payment_outs'
+        ..operation = ChangeOperation.update
+        ..recordId = paymentOutId
+        ..data = jsonEncode({
+          'id': paymentOutId,
+          'company_id': companyId,
+          'voucher_no': voucherNo,
+          'voucher_date': voucherDate.toIso8601String(),
+          'party_id': supplier.id,
+          'total_amount': totalAmount,
+          'previous_balance': previousBalance,
+          'remaining_balance': remainingBalance,
+          'description': description,
+          'attachment_path': attachmentPath,
+          'created_at': payment.createdAt.toIso8601String(),
+          'created_by_user_id': payment.createdByUserId,
+        })
+        ..createdAt = DateTime.now()
+        ..synced = false);
 
       // Delete old lines
       final oldLines = await isar.paymentOutLines
@@ -648,6 +742,8 @@ class PaymentDao {
         }
       }
     });
+
+    return updatedPayment;
   }
 
   Future<void> deletePaymentOut(int paymentOutId) async {

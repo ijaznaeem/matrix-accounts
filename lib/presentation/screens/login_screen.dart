@@ -355,7 +355,7 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                               icon: const Icon(
                                 Icons.admin_panel_settings_outlined,
                               ),
-                              label: const Text('Register Admin'),
+                              label: const Text('Register'),
                               style: OutlinedButton.styleFrom(
                                 padding:
                                     const EdgeInsets.symmetric(vertical: 14),

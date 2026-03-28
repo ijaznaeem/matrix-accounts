@@ -73,6 +73,10 @@ Route::middleware('auth:sanctum')->group(function () {
     // ── Attachments ───────────────────────────────────
     Route::post('/attachments/invoice/upload', [AttachmentController::class, 'uploadInvoiceAttachment']);
     Route::get('/attachments/invoice/{invoiceId}', [AttachmentController::class, 'downloadInvoiceAttachment']);
+    Route::post('/attachments/payment-in/upload', [AttachmentController::class, 'uploadPaymentInAttachment']);
+    Route::get('/attachments/payment-in/{paymentInId}', [AttachmentController::class, 'downloadPaymentInAttachment']);
+    Route::post('/attachments/payment-out/upload', [AttachmentController::class, 'uploadPaymentOutAttachment']);
+    Route::get('/attachments/payment-out/{paymentOutId}', [AttachmentController::class, 'downloadPaymentOutAttachment']);
 
     // ── Accounts & ledger ─────────────────────────────
     Route::get('/accounts',              [AccountController::class, 'index']);

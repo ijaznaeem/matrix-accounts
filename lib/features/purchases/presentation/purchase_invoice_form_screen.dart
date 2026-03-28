@@ -5,6 +5,7 @@ import 'dart:io';
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:flutter_table_plus/flutter_table_plus.dart';
 import 'package:go_router/go_router.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:isar/isar.dart';
@@ -18,6 +19,7 @@ import '../../../core/config/providers.dart';
 import '../../../core/database/dao/party_dao.dart';
 import '../../../core/database/dao/purchase_dao.dart';
 import '../../../core/database/dao/sales_dao.dart';
+import '../../../core/providers/settings_provider.dart';
 import '../../../core/services/whatsapp_service.dart';
 import '../../../data/models/account_models.dart' as account_models;
 import '../../../data/models/company_model.dart';
@@ -27,6 +29,7 @@ import '../../../data/models/party_model.dart';
 import '../../../data/models/payment_models.dart';
 import '../../../data/models/transaction_model.dart';
 import '../../../data/models/user_model.dart';
+import '../../../presentation/widgets/searchable_list.dart';
 import '../../parties/logic/party_provider.dart' show partyListProvider;
 import '../../parties/presentation/party_form_screen.dart';
 import '../../payments/logic/payment_providers.dart';
@@ -100,6 +103,12 @@ class _PurchaseInvoiceFormScreenState
   bool _isLoading = true;
   bool _isSaving = false;
   bool _showAllItems = false;
+
+  String get _currencySymbol {
+    final settings = ref.read(settingsProvider);
+    return SettingsConstants.currencySymbols[settings.defaultCurrency] ??
+        settings.defaultCurrency;
+  }
 
   @override
   void initState() {
@@ -515,6 +524,7 @@ class _PurchaseInvoiceFormScreenState
     final user = ref.watch(currentUserProvider);
     final productAsync = ref.watch(productListProvider);
     final purchaseDao = ref.read(purchaseDaoProvider);
+    final isTablet = MediaQuery.of(context).size.width > 600;
 
     if (company == null) {
       return const Scaffold(
@@ -591,114 +601,31 @@ class _PurchaseInvoiceFormScreenState
       ),
       body: SingleChildScrollView(
         child: Padding(
-          padding:
-              EdgeInsets.all(MediaQuery.of(context).size.width > 600 ? 24 : 16),
+          padding: EdgeInsets.all(isTablet ? 24 : 16),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               _buildSupplierSelector(context),
-              SizedBox(
-                  height: MediaQuery.of(context).size.width > 600 ? 28 : 20),
+              SizedBox(height: isTablet ? 28 : 20),
               productAsync.when(
                 data: (products) => Column(
                   children: [
-                    _buildAddItemsSearch(
-                      MediaQuery.of(context).size.width > 600,
-                      MediaQuery.of(context).size.width > 600 ? 15 : 13,
-                      context,
-                      products,
-                    ),
-                    SizedBox(
-                        height:
-                            MediaQuery.of(context).size.width > 600 ? 20 : 16),
-                    ListView.builder(
-                      shrinkWrap: true,
-                      physics: const NeverScrollableScrollPhysics(),
-                      itemCount: _lines.length,
-                      itemBuilder: (_, i) => Padding(
-                        padding: EdgeInsets.only(
-                            bottom: MediaQuery.of(context).size.width > 600
-                                ? 16
-                                : 12),
-                        child: Dismissible(
-                          key: Key('line_item_$i'),
-                          direction: DismissDirection.endToStart,
-                          background: Container(
-                            alignment: Alignment.centerRight,
-                            padding: const EdgeInsets.only(right: 20),
-                            decoration: BoxDecoration(
-                              color: Colors.red,
-                              borderRadius: BorderRadius.circular(12),
-                            ),
-                            child: const Row(
-                              mainAxisAlignment: MainAxisAlignment.end,
-                              children: [
-                                Icon(
-                                  Icons.delete,
-                                  color: Colors.white,
-                                  size: 24,
-                                ),
-                                SizedBox(width: 8),
-                                Text(
-                                  'Delete',
-                                  style: TextStyle(
-                                    color: Colors.white,
-                                    fontWeight: FontWeight.bold,
-                                    fontSize: 16,
-                                  ),
-                                ),
-                              ],
-                            ),
-                          ),
-                          confirmDismiss: (direction) async {
-                            if (_lines.length <= 1) {
-                              ScaffoldMessenger.of(context).showSnackBar(
-                                const SnackBar(
-                                  content:
-                                      Text('At least one item is required'),
-                                  backgroundColor: Colors.orange,
-                                ),
-                              );
-                              return false;
-                            }
-                            return true;
-                          },
-                          onDismissed: (direction) {
-                            setState(() {
-                              _lines.removeAt(i);
-                            });
-                            ScaffoldMessenger.of(context).showSnackBar(
-                              const SnackBar(
-                                content: Text('Item deleted'),
-                                backgroundColor: Colors.red,
-                                duration: Duration(seconds: 2),
-                              ),
-                            );
-                          },
-                          child:
-                              _buildLineItem(context, _lines[i], products, i),
-                        ),
-                      ),
-                    ),
+                    _buildProductsTable(isTablet),
+                    SizedBox(height: isTablet ? 16 : 12),
+                    _buildProductSelectorDropdown(isTablet, products),
                   ],
                 ),
                 loading: () => const Center(child: CircularProgressIndicator()),
                 error: (_, __) =>
                     const Center(child: Text('Error loading products')),
               ),
-              SizedBox(
-                  height: MediaQuery.of(context).size.width > 600 ? 28 : 20),
+              SizedBox(height: isTablet ? 28 : 20),
+              _buildCashPaymentSection(isTablet),
+              SizedBox(height: isTablet ? 28 : 20),
               _buildCalculationCard(),
-              SizedBox(
-                  height: MediaQuery.of(context).size.width > 600 ? 28 : 20),
-              SizedBox(
-                  height: MediaQuery.of(context).size.width > 600 ? 28 : 20),
-              _buildPaymentLinesSection(),
-              SizedBox(
-                  height: MediaQuery.of(context).size.width > 600 ? 28 : 20),
+              SizedBox(height: isTablet ? 28 : 20),
               _buildNotesAndAttachmentSection(),
-              SizedBox(
-                  height: MediaQuery.of(context).size.width > 600 ? 28 : 20),
+              SizedBox(height: isTablet ? 28 : 20),
               Row(
                 children: [
                   Expanded(
@@ -712,10 +639,8 @@ class _PurchaseInvoiceFormScreenState
                       style: ElevatedButton.styleFrom(
                         backgroundColor:
                             _isSaving ? Colors.grey : Colors.orange,
-                        padding: EdgeInsets.symmetric(
-                            vertical: MediaQuery.of(context).size.width > 600
-                                ? 18
-                                : 16),
+                        padding:
+                            EdgeInsets.symmetric(vertical: isTablet ? 18 : 16),
                         shape: RoundedRectangleBorder(
                           borderRadius: BorderRadius.circular(12),
                         ),
@@ -733,8 +658,7 @@ class _PurchaseInvoiceFormScreenState
                       label: Text(
                         _isSaving ? 'Saving...' : 'Save',
                         style: TextStyle(
-                          fontSize:
-                              MediaQuery.of(context).size.width > 600 ? 18 : 16,
+                          fontSize: isTablet ? 18 : 16,
                           fontWeight: FontWeight.w600,
                           color: Colors.white,
                         ),
@@ -1002,311 +926,122 @@ class _PurchaseInvoiceFormScreenState
 
     return partyAsync.when(
       data: (parties) {
-        final suppliers = parties; // Show all types of parties
-        final searchQuery = _supplierSearchCtrl.text.toLowerCase();
-        final filtered = suppliers
-            .where((s) => s.name.toLowerCase().contains(searchQuery))
-            .toList();
+        final allSuppliers = parties.toList();
 
         return Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            // Single row with supplier selector and balance
-            Row(
-              children: [
-                // Supplier Selector (left side)
-                Expanded(
-                  flex: _selectedSupplier != null ? 2 : 1,
-                  child: Container(
-                    decoration: BoxDecoration(
-                      borderRadius: BorderRadius.circular(8),
-                      border: Border.all(
-                        color: _selectedSupplier != null
-                            ? const Color(0xFFFF8C42)
-                            : Colors.grey.shade300,
-                      ),
-                    ),
-                    child: TextField(
-                      controller: _supplierSearchCtrl,
-                      focusNode: _supplierSearchFocus,
-                      onChanged: (value) => setState(() {}),
-                      onTap: () {
-                        // Show all suppliers when field is tapped
-                        setState(() {});
-                      },
-                      decoration: InputDecoration(
-                        hintText:
-                            _selectedSupplier?.name ?? 'Search Supplier...',
-                        hintStyle: TextStyle(
-                          color: _selectedSupplier?.name != null
-                              ? Colors.grey.shade900
-                              : Colors.grey.shade500,
-                          fontSize: isTablet ? 15 : 13,
-                        ),
-                        prefixIcon: Icon(
-                          Icons.business,
-                          size: isTablet ? 20 : 18,
-                          color: _selectedSupplier != null
-                              ? const Color(0xFFFF8C42)
-                              : Colors.grey.shade400,
-                        ),
-                        suffixIcon: _selectedSupplier != null
-                            ? IconButton(
-                                icon:
-                                    Icon(Icons.clear, size: isTablet ? 18 : 16),
-                                onPressed: () {
-                                  setState(() {
-                                    _selectedSupplier = null;
-                                    _supplierSearchCtrl.clear();
-                                    _previousBalance = 0;
-                                  });
-                                  _calculateTotalPayable();
-                                },
-                              )
-                            : null,
-                        border: InputBorder.none,
-                        contentPadding: EdgeInsets.symmetric(
-                          horizontal: isTablet ? 12 : 10,
-                          vertical: isTablet ? 12 : 10,
-                        ),
-                      ),
+            SearchableDropdown<Party>(
+              items: allSuppliers,
+              itemBuilder: (party) => ListTile(
+                dense: true,
+                leading: CircleAvatar(
+                  radius: isTablet ? 16 : 14,
+                  backgroundColor: Colors.orange.shade100,
+                  child: Text(
+                    party.name.isNotEmpty ? party.name[0].toUpperCase() : 'S',
+                    style: TextStyle(
+                      fontSize: isTablet ? 14 : 12,
+                      fontWeight: FontWeight.bold,
+                      color: Colors.orange.shade700,
                     ),
                   ),
                 ),
-                // Supplier Opening Balance Display (right side)
-                if (_selectedSupplier != null) ...[
-                  SizedBox(width: isTablet ? 12 : 8),
-                  Expanded(
-                    flex: 1,
-                    child: Container(
-                      decoration: BoxDecoration(
-                        color: _previousBalance > 0
-                            ? Colors.red.shade50
-                            : _previousBalance < 0
-                                ? Colors.green.shade50
-                                : Colors.grey.shade100,
-                        borderRadius: BorderRadius.circular(8),
-                        border: Border.all(
-                          color: _previousBalance > 0
-                              ? Colors.red.shade200
-                              : _previousBalance < 0
-                                  ? Colors.green.shade200
-                                  : Colors.grey.shade300,
-                        ),
-                      ),
-                      padding: EdgeInsets.symmetric(
-                        horizontal: isTablet ? 12 : 8,
-                        vertical: isTablet ? 12 : 10,
-                      ),
-                      child: Row(
-                        children: [
-                          Icon(
-                            _previousBalance > 0
-                                ? Icons.warning
-                                : _previousBalance < 0
-                                    ? Icons.account_balance_wallet
-                                    : Icons.balance,
-                            size: isTablet ? 18 : 16,
-                            color: _previousBalance > 0
-                                ? Colors.red.shade600
-                                : _previousBalance < 0
-                                    ? Colors.green.shade600
-                                    : Colors.grey.shade600,
-                          ),
-                          SizedBox(width: isTablet ? 8 : 4),
-                          Expanded(
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Text(
-                                  'Live Balance',
-                                  style: TextStyle(
-                                    fontSize: isTablet ? 10 : 9,
-                                    color: Colors.grey.shade600,
-                                    fontWeight: FontWeight.w500,
-                                  ),
-                                ),
-                                Text(
-                                  _previousBalance > 0
-                                      ? 'Receivable: Rs ${_previousBalance.abs().toStringAsFixed(0)}'
-                                      : _previousBalance < 0
-                                          ? 'Credit: Rs ${_previousBalance.abs().toStringAsFixed(0)}'
-                                          : 'Cleared: Rs 0',
-                                  style: TextStyle(
-                                    fontSize: isTablet ? 14 : 12,
-                                    fontWeight: FontWeight.w700,
-                                    color: _previousBalance > 0
-                                        ? Colors.red.shade700
-                                        : _previousBalance < 0
-                                            ? Colors.green.shade700
-                                            : Colors.grey.shade700,
-                                  ),
-                                ),
-                              ],
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                  ),
-                ],
-              ],
-            ),
-            // Dropdown suggestions - show all suppliers when focused
-            if (_supplierSearchFocus.hasFocus)
-              Container(
-                decoration: BoxDecoration(
-                  color: Colors.white,
-                  border: Border(
-                    left: BorderSide(color: Colors.grey.shade300),
-                    right: BorderSide(color: Colors.grey.shade300),
-                    bottom: BorderSide(color: Colors.grey.shade300),
-                  ),
-                  borderRadius: const BorderRadius.only(
-                    bottomLeft: Radius.circular(8),
-                    bottomRight: Radius.circular(8),
+                title: Text(
+                  party.name,
+                  style: TextStyle(
+                    fontSize: isTablet ? 14 : 12,
+                    fontWeight: FontWeight.w500,
                   ),
                 ),
-                constraints: BoxConstraints(
-                  maxHeight: searchQuery.isEmpty
-                      ? (suppliers.length * (isTablet ? 65.0 : 55.0)) +
-                          (_selectedSupplier == null
-                              ? (isTablet ? 70.0 : 60.0)
-                              : 0)
-                      : (filtered.length * (isTablet ? 65.0 : 55.0)) +
-                          (_selectedSupplier == null
-                              ? (isTablet ? 70.0 : 60.0)
-                              : 0),
-                ),
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    // Add New Party button (only show when no supplier is selected)
-                    if (_selectedSupplier == null)
-                      Container(
-                        width: double.infinity,
-                        decoration: BoxDecoration(
-                          color: Colors.green.shade50,
-                          border: Border(
-                            bottom: BorderSide(color: Colors.grey.shade200),
-                          ),
-                        ),
-                        child: ListTile(
-                          dense: true,
-                          leading: Icon(
-                            Icons.business_outlined,
-                            color: Colors.green.shade600,
-                            size: isTablet ? 20 : 18,
-                          ),
-                          title: Text(
-                            searchQuery.isNotEmpty
-                                ? 'Add "$searchQuery" as new supplier'
-                                : 'Add New Supplier',
-                            style: TextStyle(
-                              fontSize: isTablet ? 14 : 12,
-                              fontWeight: FontWeight.w600,
-                              color: Colors.green.shade700,
-                            ),
-                          ),
-                          trailing: Icon(
-                            Icons.arrow_forward_ios,
-                            size: isTablet ? 16 : 14,
-                            color: Colors.green.shade600,
-                          ),
-                          onTap: () {
-                            if (searchQuery.isNotEmpty) {
-                              _addNewPartyWithName(searchQuery);
-                            } else {
-                              _addNewParty();
-                            }
-                          },
-                        ),
-                      ),
-                    // Existing suppliers list
-                    Flexible(
-                      child: ListView.builder(
-                        shrinkWrap: true,
-                        physics: const ClampingScrollPhysics(),
-                        itemCount: searchQuery.isEmpty
-                            ? suppliers.length
-                            : filtered.length,
-                        itemBuilder: (context, index) {
-                          final party = searchQuery.isEmpty
-                              ? suppliers[index]
-                              : filtered[index];
-                          return ListTile(
-                            dense: true,
-                            leading: CircleAvatar(
-                              radius: isTablet ? 16 : 14,
-                              backgroundColor: Colors.orange.shade100,
-                              child: Text(
-                                party.name.isNotEmpty
-                                    ? party.name[0].toUpperCase()
-                                    : 'S',
-                                style: TextStyle(
-                                  fontSize: isTablet ? 14 : 12,
-                                  fontWeight: FontWeight.bold,
-                                  color: Colors.orange.shade700,
-                                ),
-                              ),
-                            ),
-                            title: Text(
-                              party.name,
-                              style: TextStyle(
-                                fontSize: isTablet ? 14 : 12,
-                                fontWeight: FontWeight.w500,
-                              ),
-                            ),
-                            subtitle: FutureBuilder<double>(
-                              future: _getSupplierBalance(party.id),
-                              builder: (context, balanceSnapshot) {
-                                final balance = balanceSnapshot.data ?? 0.0;
-                                final isLoading =
-                                    balanceSnapshot.connectionState ==
-                                        ConnectionState.waiting;
-
-                                if (isLoading) {
-                                  return Text(
-                                    'Loading balance...',
-                                    style: TextStyle(
-                                      fontSize: isTablet ? 11 : 10,
-                                      color: Colors.grey.shade500,
-                                    ),
-                                  );
-                                }
-
-                                return Text(
-                                  balance > 0
-                                      ? 'Receivable: Rs ${balance.abs().toStringAsFixed(2)}'
-                                      : balance < 0
-                                          ? 'Credit: Rs ${balance.abs().toStringAsFixed(2)}'
-                                          : 'Cleared: Rs 0.00',
-                                  style: TextStyle(
-                                    fontSize: isTablet ? 11 : 10,
-                                    color: balance > 0
-                                        ? Colors.red.shade600
-                                        : balance < 0
-                                            ? Colors.green.shade600
-                                            : Colors.grey.shade600,
-                                  ),
-                                );
-                              },
-                            ),
-                            trailing: Icon(
-                              Icons.arrow_forward_ios,
-                              size: isTablet ? 14 : 12,
-                              color: Colors.grey.shade400,
-                            ),
-                            onTap: () {
-                              _onSupplierSelected(party);
-                            },
-                          );
-                        },
-                      ),
-                    ),
-                  ],
+                trailing: Icon(
+                  Icons.arrow_forward_ios,
+                  size: isTablet ? 14 : 12,
+                  color: Colors.grey.shade400,
                 ),
               ),
+              searchMatcher: (party) => party.name,
+              onSelected: _onSupplierSelected,
+              hintText: _selectedSupplier?.name ?? 'Search Supplier',
+              headerBuilder: _buildSupplierModalHeader,
+              isSelected: _selectedSupplier != null,
+              onClear: _selectedSupplier != null
+                  ? () {
+                      setState(() {
+                        _selectedSupplier = null;
+                        _supplierSearchCtrl.clear();
+                        _previousBalance = 0;
+                      });
+                      _calculateTotalPayable();
+                    }
+                  : null,
+              maxHeight: 300,
+            ),
+            if (_selectedSupplier != null) ...[
+              SizedBox(height: isTablet ? 12 : 8),
+              FutureBuilder<double>(
+                future: _getSupplierBalance(_selectedSupplier!.id),
+                builder: (context, snapshot) {
+                  final liveBalance = snapshot.data ?? 0.0;
+                  final isLoading =
+                      snapshot.connectionState == ConnectionState.waiting;
+
+                  return Container(
+                    width: double.infinity,
+                    decoration: BoxDecoration(
+                      color: liveBalance >= 0
+                          ? Colors.orange.shade50
+                          : Colors.green.shade50,
+                      borderRadius: BorderRadius.circular(12),
+                      border: Border.all(
+                        color: liveBalance >= 0
+                            ? Colors.orange.shade300
+                            : Colors.green.shade300,
+                        width: 1.5,
+                      ),
+                    ),
+                    padding: EdgeInsets.symmetric(
+                      horizontal: isTablet ? 12 : 8,
+                      vertical: isTablet ? 12 : 10,
+                    ),
+                    child: Row(
+                      children: [
+                        if (isLoading)
+                          SizedBox(
+                            width: isTablet ? 16 : 14,
+                            height: isTablet ? 16 : 14,
+                            child:
+                                const CircularProgressIndicator(strokeWidth: 2),
+                          )
+                        else
+                          Icon(
+                            liveBalance >= 0
+                                ? Icons.trending_up
+                                : Icons.trending_down,
+                            size: isTablet ? 18 : 16,
+                            color: liveBalance >= 0
+                                ? Colors.orange.shade700
+                                : Colors.green.shade700,
+                          ),
+                        SizedBox(width: isTablet ? 8 : 6),
+                        Expanded(
+                          child: Text(
+                            'Supplier Balance: $_currencySymbol ${liveBalance.abs().toStringAsFixed(2)}',
+                            style: TextStyle(
+                              fontSize: isTablet ? 13 : 11,
+                              fontWeight: FontWeight.w600,
+                              color: liveBalance >= 0
+                                  ? Colors.orange.shade800
+                                  : Colors.green.shade800,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  );
+                },
+              ),
+            ],
           ],
         );
       },
@@ -1319,6 +1054,655 @@ class _PurchaseInvoiceFormScreenState
         ),
         child: const Text('Error loading suppliers'),
       ),
+    );
+  }
+
+  Widget _buildSupplierModalHeader(String searchQuery) {
+    final isTablet = MediaQuery.of(context).size.width > 600;
+
+    return Container(
+      width: double.infinity,
+      decoration: BoxDecoration(
+        color: Colors.green.shade50,
+        border: Border(bottom: BorderSide(color: Colors.grey.shade200)),
+      ),
+      child: SafeArea(
+        bottom: false,
+        child: ListTile(
+          dense: true,
+          leading: Icon(
+            Icons.business_outlined,
+            color: Colors.green.shade600,
+            size: isTablet ? 20 : 18,
+          ),
+          title: Text(
+            searchQuery.isNotEmpty
+                ? 'Add "$searchQuery" as new supplier'
+                : 'Add New Supplier',
+            style: TextStyle(
+              fontSize: isTablet ? 14 : 12,
+              fontWeight: FontWeight.w600,
+              color: Colors.green.shade700,
+            ),
+          ),
+          trailing: Icon(
+            Icons.arrow_forward_ios,
+            size: isTablet ? 16 : 14,
+            color: Colors.green.shade600,
+          ),
+          onTap: () {
+            if (searchQuery.isNotEmpty) {
+              _addNewPartyWithName(searchQuery);
+            } else {
+              _addNewParty();
+            }
+          },
+        ),
+      ),
+    );
+  }
+
+  void _ensurePurchaseLineControllers(int index, PurchaseLineDraft line) {
+    if (!_qtyControllers.containsKey(index)) {
+      _qtyControllers[index] = TextEditingController(
+        text: line.qty > 0
+            ? (line.qty == line.qty.roundToDouble()
+                ? line.qty.toStringAsFixed(0)
+                : line.qty.toString())
+            : '',
+      );
+    }
+    if (!_rateControllers.containsKey(index)) {
+      _rateControllers[index] = TextEditingController(
+        text: line.rate > 0 ? line.rate.toStringAsFixed(2) : '',
+      );
+    }
+  }
+
+  void _removePurchaseLineAt(int index) {
+    if (index < 0 || index >= _lines.length) return;
+
+    setState(() {
+      _lines.removeAt(index);
+
+      final removedQty = _qtyControllers.remove(index);
+      final removedRate = _rateControllers.remove(index);
+      removedQty?.dispose();
+      removedRate?.dispose();
+
+      final shiftedQty = <int, TextEditingController>{};
+      final shiftedRate = <int, TextEditingController>{};
+
+      _qtyControllers.forEach((key, controller) {
+        shiftedQty[key > index ? key - 1 : key] = controller;
+      });
+      _rateControllers.forEach((key, controller) {
+        shiftedRate[key > index ? key - 1 : key] = controller;
+      });
+
+      _qtyControllers
+        ..clear()
+        ..addAll(shiftedQty);
+      _rateControllers
+        ..clear()
+        ..addAll(shiftedRate);
+    });
+
+    _onLineItemChanged();
+  }
+
+  void _addProductToPurchase(Product product) {
+    final isAlreadyAdded = _lines.any((line) => line.productId == product.id);
+    setState(() {
+      _lines.add(PurchaseLineDraft(
+        productId: product.id,
+        productName: product.name,
+        qty: 1,
+        rate: product.lastCost > 0 ? product.lastCost : product.salePrice,
+      ));
+    });
+    _onLineItemChanged();
+
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+            '${product.name} added to purchase${isAlreadyAdded ? ' (duplicate)' : ''}'),
+        backgroundColor: Colors.green,
+        duration: const Duration(seconds: 1),
+      ),
+    );
+  }
+
+  Widget _buildProductsTable(bool isTablet) {
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final horizontalCellPadding = isTablet ? 6.0 : 4.0;
+        final tableInnerWidth =
+            (constraints.maxWidth - 8).clamp(260.0, 1800.0).toDouble();
+
+        var actionColumnWidth = (isTablet ? 0.05 : 0.06) * tableInnerWidth;
+        var qtyColumnWidth = (isTablet ? 0.12 : 0.13) * tableInnerWidth;
+        var rateColumnWidth = (isTablet ? 0.15 : 0.16) * tableInnerWidth;
+        var amountColumnWidth = (isTablet ? 0.19 : 0.20) * tableInnerWidth;
+
+        final minAction = isTablet ? 28.0 : 24.0;
+        final minQty = isTablet ? 52.0 : 46.0;
+        final minRate = isTablet ? 64.0 : 52.0;
+        final minAmount = isTablet ? 86.0 : 72.0;
+        final minProduct = isTablet ? 180.0 : 110.0;
+
+        if (actionColumnWidth < minAction) actionColumnWidth = minAction;
+        if (qtyColumnWidth < minQty) qtyColumnWidth = minQty;
+        if (rateColumnWidth < minRate) rateColumnWidth = minRate;
+        if (amountColumnWidth < minAmount) amountColumnWidth = minAmount;
+
+        var productColumnWidth = tableInnerWidth -
+            (qtyColumnWidth +
+                rateColumnWidth +
+                amountColumnWidth +
+                actionColumnWidth);
+
+        if (productColumnWidth < minProduct) {
+          var deficit = minProduct - productColumnWidth;
+
+          final amountReducible = amountColumnWidth - minAmount;
+          if (amountReducible > 0 && deficit > 0) {
+            final cut = amountReducible < deficit ? amountReducible : deficit;
+            amountColumnWidth -= cut;
+            deficit -= cut;
+          }
+
+          final rateReducible = rateColumnWidth - minRate;
+          if (rateReducible > 0 && deficit > 0) {
+            final cut = rateReducible < deficit ? rateReducible : deficit;
+            rateColumnWidth -= cut;
+            deficit -= cut;
+          }
+
+          final qtyReducible = qtyColumnWidth - minQty;
+          if (qtyReducible > 0 && deficit > 0) {
+            final cut = qtyReducible < deficit ? qtyReducible : deficit;
+            qtyColumnWidth -= cut;
+            deficit -= cut;
+          }
+
+          final actionReducible = actionColumnWidth - minAction;
+          if (actionReducible > 0 && deficit > 0) {
+            final cut = actionReducible < deficit ? actionReducible : deficit;
+            actionColumnWidth -= cut;
+            deficit -= cut;
+          }
+
+          productColumnWidth = tableInnerWidth -
+              (qtyColumnWidth +
+                  rateColumnWidth +
+                  amountColumnWidth +
+                  actionColumnWidth);
+        }
+
+        final columns = TableColumnsBuilder<PurchaseLineDraft>()
+          ..addColumn(
+            'product',
+            TablePlusColumn<PurchaseLineDraft>(
+              key: 'product',
+              label: 'Product',
+              order: 1,
+              width: productColumnWidth,
+              sortable: false,
+              valueAccessor: (line) => line.productName ?? 'Select product',
+              statefulCellBuilder: (context, row, isSelected, isDim) {
+                return Text(
+                  row.productName ?? 'Select product',
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    fontSize: isTablet ? 13 : 11,
+                    fontWeight: FontWeight.w600,
+                    color: Colors.grey.shade900,
+                  ),
+                );
+              },
+            ),
+          )
+          ..addColumn(
+            'qty',
+            TablePlusColumn<PurchaseLineDraft>(
+              key: 'qty',
+              label: 'Qty',
+              order: 2,
+              width: qtyColumnWidth,
+              sortable: false,
+              alignment: Alignment.center,
+              textAlign: TextAlign.center,
+              valueAccessor: (line) => line.qty,
+              statefulCellBuilder: (context, row, isSelected, isDim) {
+                final index = _lines.indexOf(row);
+                if (index < 0) return const SizedBox.shrink();
+                _ensurePurchaseLineControllers(index, row);
+
+                return SizedBox(
+                  height: isTablet ? 34 : 30,
+                  child: TextFormField(
+                    controller: _qtyControllers[index],
+                    textAlign: TextAlign.center,
+                    keyboardType:
+                        const TextInputType.numberWithOptions(decimal: true),
+                    textInputAction: TextInputAction.done,
+                    style: TextStyle(fontSize: isTablet ? 12 : 11),
+                    decoration: const InputDecoration(
+                      border: OutlineInputBorder(),
+                      isDense: true,
+                      contentPadding: EdgeInsets.symmetric(
+                        vertical: 6,
+                        horizontal: 4,
+                      ),
+                    ),
+                    onChanged: (value) {
+                      if (value.isNotEmpty) {
+                        final qty = double.tryParse(value);
+                        if (qty != null && qty > 0 && qty != row.qty) {
+                          setState(() {
+                            row.qty = qty;
+                          });
+                          _onLineItemChanged();
+                        }
+                      }
+                    },
+                  ),
+                );
+              },
+            ),
+          )
+          ..addColumn(
+            'rate',
+            TablePlusColumn<PurchaseLineDraft>(
+              key: 'rate',
+              label: 'Rate',
+              order: 3,
+              width: rateColumnWidth,
+              sortable: false,
+              alignment: Alignment.center,
+              textAlign: TextAlign.center,
+              valueAccessor: (line) => line.rate,
+              statefulCellBuilder: (context, row, isSelected, isDim) {
+                final index = _lines.indexOf(row);
+                if (index < 0) return const SizedBox.shrink();
+                _ensurePurchaseLineControllers(index, row);
+
+                return SizedBox(
+                  height: isTablet ? 34 : 30,
+                  child: TextFormField(
+                    controller: _rateControllers[index],
+                    textAlign: TextAlign.center,
+                    keyboardType:
+                        const TextInputType.numberWithOptions(decimal: true),
+                    textInputAction: TextInputAction.done,
+                    style: TextStyle(fontSize: isTablet ? 12 : 11),
+                    decoration: const InputDecoration(
+                      border: OutlineInputBorder(),
+                      isDense: true,
+                      contentPadding: EdgeInsets.symmetric(
+                        vertical: 6,
+                        horizontal: 4,
+                      ),
+                    ),
+                    onChanged: (value) {
+                      if (value.isNotEmpty) {
+                        final rate = double.tryParse(value);
+                        if (rate != null && rate != row.rate) {
+                          setState(() {
+                            row.rate = rate;
+                          });
+                          _onLineItemChanged();
+                        }
+                      }
+                    },
+                  ),
+                );
+              },
+            ),
+          )
+          ..addColumn(
+            'amount',
+            TablePlusColumn<PurchaseLineDraft>(
+              key: 'amount',
+              label: 'Amount ($_currencySymbol)',
+              order: 4,
+              width: amountColumnWidth,
+              sortable: false,
+              alignment: Alignment.centerRight,
+              textAlign: TextAlign.right,
+              valueAccessor: (line) => line.qty * line.rate,
+              statefulCellBuilder: (context, row, isSelected, isDim) {
+                final amount = row.qty * row.rate;
+                return Text(
+                  amount.toStringAsFixed(2),
+                  textAlign: TextAlign.end,
+                  style: TextStyle(
+                    fontSize: isTablet ? 12 : 11,
+                    fontWeight: FontWeight.w700,
+                    color: Colors.grey.shade900,
+                  ),
+                );
+              },
+            ),
+          )
+          ..addColumn(
+            'action',
+            TablePlusColumn<PurchaseLineDraft>(
+              key: 'action',
+              label: '',
+              order: 5,
+              width: actionColumnWidth,
+              sortable: false,
+              alignment: Alignment.center,
+              textAlign: TextAlign.center,
+              valueAccessor: (line) => '',
+              statefulCellBuilder: (context, row, isSelected, isDim) {
+                final index = _lines.indexOf(row);
+                return IconButton(
+                  tooltip: 'Delete product',
+                  padding: EdgeInsets.zero,
+                  constraints: BoxConstraints.tightFor(
+                    width: isTablet ? 26 : 22,
+                    height: isTablet ? 26 : 22,
+                  ),
+                  visualDensity: VisualDensity.compact,
+                  onPressed:
+                      index < 0 ? null : () => _removePurchaseLineAt(index),
+                  icon: Icon(
+                    Icons.delete_outline,
+                    size: isTablet ? 17 : 15,
+                    color: Colors.red.shade500,
+                  ),
+                );
+              },
+            ),
+          );
+
+        final headerHeight = isTablet ? 40.0 : 36.0;
+        final rowHeight = isTablet ? 42.0 : 38.0;
+        final footerHeight = isTablet ? 34.0 : 30.0;
+        final visibleRows = _lines.isEmpty ? 1 : _lines.length;
+        final totalQty = _lines.fold<double>(0, (sum, line) => sum + line.qty);
+        final totalAmount =
+            _lines.fold<double>(0, (sum, line) => sum + (line.qty * line.rate));
+
+        return Container(
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(color: Colors.grey.shade300),
+          ),
+          padding: const EdgeInsets.all(3),
+          child: SizedBox(
+            height: headerHeight + (visibleRows * rowHeight) + footerHeight,
+            child: Column(
+              children: [
+                Expanded(
+                  child: FlutterTablePlus<PurchaseLineDraft>(
+                    columns: columns.build(),
+                    data: _lines,
+                    rowId: (line) =>
+                        '${line.productId ?? 'line'}-${_lines.indexOf(line)}',
+                    sortColumnKey: null,
+                    sortDirection: SortDirection.none,
+                    onSort: null,
+                    resizable: false,
+                    stretchLastColumn: false,
+                    theme: TablePlusTheme(
+                      scrollbarTheme:
+                          const TablePlusScrollbarTheme(showHorizontal: false),
+                      headerTheme: TablePlusHeaderTheme(
+                        height: headerHeight,
+                        padding: EdgeInsets.symmetric(
+                            horizontal: horizontalCellPadding),
+                        textStyle: TextStyle(
+                          fontSize: isTablet ? 12 : 11,
+                          fontWeight: FontWeight.w600,
+                          color: const Color(0xFF212121),
+                        ),
+                      ),
+                      bodyTheme: TablePlusBodyTheme(
+                        rowHeight: rowHeight,
+                        padding: EdgeInsets.symmetric(
+                            horizontal: horizontalCellPadding),
+                        textStyle: TextStyle(
+                          fontSize: isTablet ? 12 : 11,
+                          color: const Color(0xFF212121),
+                        ),
+                      ),
+                    ),
+                    noDataWidget: Center(
+                      child: Text(
+                        'No items added yet. Use product dropdown below to add items.',
+                        style: TextStyle(
+                          fontSize: isTablet ? 12 : 11,
+                          color: Colors.grey.shade600,
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+                Container(
+                  height: footerHeight,
+                  decoration: BoxDecoration(
+                    color: Colors.grey.shade100,
+                    border:
+                        Border(top: BorderSide(color: Colors.grey.shade300)),
+                  ),
+                  child: Row(
+                    children: [
+                      SizedBox(
+                        width: productColumnWidth,
+                        child: Padding(
+                          padding: EdgeInsets.symmetric(
+                              horizontal: horizontalCellPadding),
+                          child: Text(
+                            'Total',
+                            style: TextStyle(
+                              fontSize: isTablet ? 12 : 11,
+                              fontWeight: FontWeight.w700,
+                              color: Colors.grey.shade900,
+                            ),
+                          ),
+                        ),
+                      ),
+                      SizedBox(
+                        width: qtyColumnWidth,
+                        child: Text(
+                          totalQty == totalQty.roundToDouble()
+                              ? totalQty.toStringAsFixed(0)
+                              : totalQty.toStringAsFixed(2),
+                          textAlign: TextAlign.center,
+                          style: TextStyle(
+                            fontSize: isTablet ? 12 : 11,
+                            fontWeight: FontWeight.w700,
+                            color: Colors.grey.shade900,
+                          ),
+                        ),
+                      ),
+                      SizedBox(width: rateColumnWidth),
+                      SizedBox(
+                        width: amountColumnWidth,
+                        child: Padding(
+                          padding: EdgeInsets.symmetric(
+                              horizontal: horizontalCellPadding),
+                          child: Text(
+                            totalAmount.toStringAsFixed(2),
+                            textAlign: TextAlign.end,
+                            style: TextStyle(
+                              fontSize: isTablet ? 12 : 11,
+                              fontWeight: FontWeight.w700,
+                              color: Colors.grey.shade900,
+                            ),
+                          ),
+                        ),
+                      ),
+                      SizedBox(width: actionColumnWidth),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  Widget _buildProductSelectorDropdown(bool isTablet, List<Product> products) {
+    return SearchableDropdown<Product>(
+      items: products,
+      hintText: 'Search & Add Items (Name, SKU)...',
+      maxHeight: isTablet ? 320 : 260,
+      searchMatcher: (product) => '${product.name} ${product.sku}',
+      onSelected: _addProductToPurchase,
+      itemBuilder: (product) {
+        final isAlreadyAdded =
+            _lines.any((line) => line.productId == product.id);
+        return ListTile(
+          dense: true,
+          leading: CircleAvatar(
+            radius: isTablet ? 16 : 14,
+            backgroundColor: Colors.blue.shade50,
+            child: Icon(
+              isAlreadyAdded ? Icons.check : Icons.add,
+              size: isTablet ? 16 : 14,
+              color:
+                  isAlreadyAdded ? Colors.green.shade600 : Colors.blue.shade600,
+            ),
+          ),
+          title: Text(
+            product.name,
+            style: TextStyle(
+              fontSize: isTablet ? 14 : 12,
+              fontWeight: FontWeight.w600,
+              color: Colors.grey.shade900,
+            ),
+          ),
+          subtitle: FutureBuilder<double>(
+            future: _calculateCurrentStock(
+              ref.read(isarServiceProvider).isar,
+              ref.read(currentCompanyProvider)?.id ?? 0,
+              product.id,
+            ),
+            builder: (context, snap) {
+              final stock = snap.data ?? product.openingQty;
+              final stockColor = stock <= 0
+                  ? Colors.red.shade600
+                  : stock < 5
+                      ? Colors.orange.shade700
+                      : Colors.green.shade700;
+              final suggestedRate =
+                  product.lastCost > 0 ? product.lastCost : product.salePrice;
+
+              return Text(
+                'Stock: ${stock.toStringAsFixed(1)} • Rate: $_currencySymbol ${suggestedRate.toStringAsFixed(2)}',
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  fontSize: isTablet ? 11 : 10,
+                  fontWeight: FontWeight.w500,
+                  color: stockColor,
+                ),
+              );
+            },
+          ),
+        );
+      },
+    );
+  }
+
+  Widget _buildCashPaymentSection(bool isTablet) {
+    final fontSize = isTablet ? 18.0 : 16.0;
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          'Cash Payment',
+          style: TextStyle(
+            fontSize: fontSize,
+            fontWeight: FontWeight.w600,
+            color: Colors.grey.shade900,
+          ),
+        ),
+        SizedBox(height: isTablet ? 12 : 10),
+        Container(
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(12),
+            color: Colors.green.shade50,
+            border: Border.all(color: Colors.green.shade200),
+          ),
+          padding: EdgeInsets.all(isTablet ? 16 : 12),
+          child: Row(
+            children: [
+              Icon(
+                Icons.account_balance_wallet,
+                color: Colors.green.shade600,
+                size: isTablet ? 22 : 20,
+              ),
+              SizedBox(width: isTablet ? 12 : 8),
+              Text(
+                'Cash',
+                style: TextStyle(
+                  fontSize: isTablet ? 15 : 13,
+                  fontWeight: FontWeight.w600,
+                  color: Colors.grey.shade800,
+                ),
+              ),
+              const Spacer(),
+              SizedBox(
+                width: isTablet ? 190 : 150,
+                child: Row(
+                  children: [
+                    Text(
+                      _currencySymbol,
+                      style: TextStyle(
+                        fontSize: isTablet ? 15 : 13,
+                        fontWeight: FontWeight.w600,
+                        color: Colors.grey.shade700,
+                      ),
+                    ),
+                    SizedBox(width: isTablet ? 6 : 4),
+                    Expanded(
+                      child: TextField(
+                        controller: _cashAmountCtrl,
+                        textAlign: TextAlign.end,
+                        keyboardType: const TextInputType.numberWithOptions(
+                            decimal: true),
+                        style: TextStyle(
+                          fontSize: fontSize,
+                          fontWeight: FontWeight.w600,
+                          color: Colors.grey.shade900,
+                        ),
+                        decoration: InputDecoration(
+                          hintText: 'Enter amount',
+                          hintStyle: TextStyle(
+                            color: Colors.grey.shade500,
+                            fontSize: isTablet ? 14 : 12,
+                          ),
+                          isDense: true,
+                          border: InputBorder.none,
+                          contentPadding: EdgeInsets.zero,
+                        ),
+                        onChanged: (value) {
+                          final cashAmount = double.tryParse(value) ?? 0;
+                          _updatePaidAmount(cashAmount);
+                          if (_paymentLines.isNotEmpty) {
+                            _paymentLines[0].amount = cashAmount;
+                          }
+                        },
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
+      ],
     );
   }
 
@@ -1788,7 +2172,7 @@ class _PurchaseInvoiceFormScreenState
         Text(
           isQuantity
               ? value.toStringAsFixed(0)
-              : 'Rs ${value.toStringAsFixed(0)}',
+              : '$_currencySymbol ${value.toStringAsFixed(0)}',
           style: TextStyle(
             fontWeight: isBold ? FontWeight.bold : FontWeight.normal,
             fontSize: isTablet ? 16 : 14,
@@ -1993,7 +2377,7 @@ class _PurchaseInvoiceFormScreenState
                             fontWeight: FontWeight.w700,
                             color: const Color(0xFF26C485))),
                     Row(children: [
-                      Text('Rs',
+                      Text(_currencySymbol,
                           style: TextStyle(
                               fontSize: isTablet ? 14 : 12,
                               color: const Color(0xFF26C485),
@@ -2147,7 +2531,7 @@ class _PurchaseInvoiceFormScreenState
             ),
           ),
           Text(
-            'Rs ${amount.toStringAsFixed(0)}',
+            '$_currencySymbol ${amount.toStringAsFixed(0)}',
             style: TextStyle(
               fontSize: fontSize ?? (isTablet ? 14 : 12),
               fontWeight: isBold ? FontWeight.w700 : FontWeight.w600,
@@ -2202,7 +2586,7 @@ class _PurchaseInvoiceFormScreenState
                     size: isTablet ? 20 : 18,
                     color: Colors.green.shade600,
                   ),
-                  prefixText: 'Rs ',
+                  prefixText: '$_currencySymbol ',
                   prefixStyle: TextStyle(
                     fontSize: isTablet ? 16 : 14,
                     fontWeight: FontWeight.bold,
@@ -2315,7 +2699,7 @@ class _PurchaseInvoiceFormScreenState
               textInputAction: TextInputAction.done,
               style: TextStyle(fontSize: isTablet ? 16 : 14),
               decoration: InputDecoration(
-                prefixText: 'Rs ',
+                prefixText: '$_currencySymbol ',
                 prefixStyle: TextStyle(
                   fontSize: isTablet ? 16 : 14,
                   fontWeight: FontWeight.bold,
@@ -2994,17 +3378,17 @@ class _PurchaseInvoiceFormScreenState
       final success = await whatsappService.shareInvoice(
         invoiceNumber: transaction.referenceNo,
         amount: totalToUse,
-        currency: 'Rs',
+        currency: _currencySymbol,
         customerName: supplier.name,
         customerPhone: supplierPhone,
         invoiceType: 'Purchase Invoice',
         additionalDetails: '''📄 Complete Invoice Details:
 📅 Date: ${invoice.invoiceDate.toString().split(' ')[0]}
 📦 Items: ${lineItems.length}
-💰 Total Amount: Rs ${totalToUse.toStringAsFixed(2)}
-💳 Paid Amount: Rs ${totalPaidAmount.toStringAsFixed(2)}
-⚖️ Balance Amount: Rs ${(totalToUse - totalPaidAmount).toStringAsFixed(2)}
-      📊 Previous Balance: Rs ${openingBalance.toStringAsFixed(2)}''',
+      💰 Total Amount: $_currencySymbol ${totalToUse.toStringAsFixed(2)}
+      💳 Paid Amount: $_currencySymbol ${totalPaidAmount.toStringAsFixed(2)}
+      ⚖️ Balance Amount: $_currencySymbol ${(totalToUse - totalPaidAmount).toStringAsFixed(2)}
+            📊 Previous Balance: $_currencySymbol ${openingBalance.toStringAsFixed(2)}''',
       );
 
       // Also share the detailed invoice image
@@ -3013,9 +3397,9 @@ class _PurchaseInvoiceFormScreenState
         text: '''🧾 Purchase Invoice - ${transaction.referenceNo}
 🏭 Supplier: ${supplier.name}
 📅 Date: ${invoice.invoiceDate.toString().split(' ')[0]}
-💰 Amount: Rs ${totalToUse.toStringAsFixed(2)}
-💳 Paid: Rs ${totalPaidAmount.toStringAsFixed(2)}
-⚖️ Balance: Rs ${(totalToUse - totalPaidAmount).toStringAsFixed(2)}
+      💰 Amount: $_currencySymbol ${totalToUse.toStringAsFixed(2)}
+      💳 Paid: $_currencySymbol ${totalPaidAmount.toStringAsFixed(2)}
+      ⚖️ Balance: $_currencySymbol ${(totalToUse - totalPaidAmount).toStringAsFixed(2)}
 
 📱 Generated by Matrix Accounts''',
       );

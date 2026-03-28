@@ -5,6 +5,7 @@ import 'dart:io';
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:flutter_table_plus/flutter_table_plus.dart';
 import 'package:go_router/go_router.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:isar/isar.dart';
@@ -17,6 +18,7 @@ import 'package:share_plus/share_plus.dart';
 import '../../../core/config/providers.dart';
 import '../../../core/database/dao/party_dao.dart';
 import '../../../core/database/dao/sales_dao.dart';
+import '../../../core/providers/settings_provider.dart';
 import '../../../core/services/whatsapp_service.dart';
 import '../../../data/models/account_models.dart' as account_models;
 import '../../../data/models/company_model.dart';
@@ -26,6 +28,7 @@ import '../../../data/models/party_model.dart';
 import '../../../data/models/payment_models.dart';
 import '../../../data/models/transaction_model.dart';
 import '../../../data/models/user_model.dart';
+import '../../../presentation/widgets/searchable_list.dart';
 import '../../parties/logic/party_provider.dart';
 import '../../parties/presentation/party_form_screen.dart';
 import '../../payments/logic/payment_providers.dart';
@@ -79,9 +82,7 @@ class _SalesInvoiceFormScreenState
   final _refNoCtrl = TextEditingController();
   final _customerSearchCtrl = TextEditingController();
   final _customerSearchFocus = FocusNode();
-  final _itemSearchCtrl = TextEditingController();
   final _cashAmountCtrl = TextEditingController();
-  final _itemSearchFocus = FocusNode();
   final List<SaleLineDraft> _lines = [];
   final List<PaymentLineDraft> _paymentLines = []; // NEW: payment lines
   final Map<int, TextEditingController> _qtyControllers = {};
@@ -101,13 +102,16 @@ class _SalesInvoiceFormScreenState
 
   int? get _activeInvoiceId => widget.invoiceId ?? _lastSavedInvoiceId;
 
+  String get _currencySymbol {
+    final settings = ref.read(settingsProvider);
+    return SettingsConstants.currencySymbols[settings.defaultCurrency] ??
+        settings.defaultCurrency;
+  }
+
   @override
   void initState() {
     super.initState();
     _customerSearchFocus.addListener(() {
-      setState(() {});
-    });
-    _itemSearchFocus.addListener(() {
       setState(() {});
     });
     if (widget.invoiceId != null) {
@@ -379,8 +383,6 @@ class _SalesInvoiceFormScreenState
     _refNoCtrl.dispose();
     _customerSearchCtrl.dispose();
     _customerSearchFocus.dispose();
-    _itemSearchCtrl.dispose();
-    _itemSearchFocus.dispose();
     _notesCtrl.dispose();
     for (var controller in _qtyControllers.values) {
       controller.dispose();
@@ -424,6 +426,78 @@ class _SalesInvoiceFormScreenState
     _calculateTotalPayable();
   }
 
+  void _ensureLineControllers(int index, SaleLineDraft line) {
+    if (!_qtyControllers.containsKey(index)) {
+      _qtyControllers[index] = TextEditingController(
+        text: line.qty > 0
+            ? (line.qty == line.qty.roundToDouble()
+                ? line.qty.toStringAsFixed(0)
+                : line.qty.toString())
+            : '',
+      );
+    }
+
+    if (!_rateControllers.containsKey(index)) {
+      _rateControllers[index] = TextEditingController(
+        text: line.rate > 0 ? line.rate.toStringAsFixed(2) : '',
+      );
+    }
+  }
+
+  void _removeLineAt(int index) {
+    if (index < 0 || index >= _lines.length) return;
+
+    setState(() {
+      _lines.removeAt(index);
+
+      final removedQty = _qtyControllers.remove(index);
+      final removedRate = _rateControllers.remove(index);
+      removedQty?.dispose();
+      removedRate?.dispose();
+
+      final shiftedQty = <int, TextEditingController>{};
+      final shiftedRate = <int, TextEditingController>{};
+
+      _qtyControllers.forEach((key, controller) {
+        shiftedQty[key > index ? key - 1 : key] = controller;
+      });
+      _rateControllers.forEach((key, controller) {
+        shiftedRate[key > index ? key - 1 : key] = controller;
+      });
+
+      _qtyControllers
+        ..clear()
+        ..addAll(shiftedQty);
+      _rateControllers
+        ..clear()
+        ..addAll(shiftedRate);
+    });
+
+    _onLineItemChanged();
+  }
+
+  void _addProductToInvoice(Product product) {
+    final isAlreadyAdded = _lines.any((line) => line.productId == product.id);
+    setState(() {
+      _lines.add(SaleLineDraft(
+        productId: product.id,
+        productName: product.name,
+        qty: 1,
+        rate: product.salePrice,
+      ));
+    });
+    _onLineItemChanged();
+
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+            '${product.name} added to invoice${isAlreadyAdded ? ' (duplicate)' : ''}'),
+        backgroundColor: Colors.green,
+        duration: const Duration(seconds: 1),
+      ),
+    );
+  }
+
   /// Returns the live AR balance for a customer using the same
   /// [PartyDao.getPartyBalance] path used by the party list and the DAO on
   /// save — so the opening balance shown on the form always matches what the
@@ -455,6 +529,16 @@ class _SalesInvoiceFormScreenState
 
     _calculateTotalPayable();
     _customerSearchFocus.unfocus();
+  }
+
+  /// Clear customer selection and reset related fields
+  void _clearCustomerSelection() {
+    setState(() {
+      _selectedCustomer = null;
+      _customerSearchCtrl.clear();
+      _previousBalance = 0;
+    });
+    _calculateTotalPayable();
   }
 
   /// Check if customer has any previous transaction history
@@ -576,22 +660,9 @@ class _SalesInvoiceFormScreenState
                   productAsync.when(
                     data: (products) => Column(
                       children: [
-                        ListView.builder(
-                          shrinkWrap: true,
-                          physics: const NeverScrollableScrollPhysics(),
-                          itemCount: _lines.length,
-                          addAutomaticKeepAlives: false,
-                          addRepaintBoundaries: false,
-                          itemBuilder: (_, i) => Padding(
-                            padding:
-                                EdgeInsets.only(bottom: isTablet ? 18 : 12),
-                            child:
-                                _buildLineItem(context, _lines[i], products, i),
-                          ),
-                        ),
+                        _buildProductsTable(isTablet),
                         SizedBox(height: isTablet ? 16 : 12),
-                        _buildAddItemsSearch(
-                            isTablet, fontSize, context, products),
+                        _buildProductSelectorDropdown(isTablet, products),
                       ],
                     ),
                     loading: () =>
@@ -600,12 +671,12 @@ class _SalesInvoiceFormScreenState
                         const Center(child: Text('Error loading products')),
                   ),
                   SizedBox(height: verticalPadding * 1.5),
-                  // Cash Payment Section
+                  // Cash Receipt Section
                   Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Text(
-                        'Cash Payment',
+                        'Cash Receipt',
                         style: TextStyle(
                           fontSize: fontSize,
                           fontWeight: FontWeight.w600,
@@ -628,69 +699,62 @@ class _SalesInvoiceFormScreenState
                               size: isTablet ? 22 : 20,
                             ),
                             SizedBox(width: isTablet ? 12 : 8),
-                            Expanded(
-                              child: TextField(
-                                controller: _cashAmountCtrl,
-                                keyboardType:
-                                    const TextInputType.numberWithOptions(
-                                        decimal: true),
-                                style: TextStyle(
-                                  fontSize: fontSize,
-                                  fontWeight: FontWeight.w600,
-                                  color: Colors.grey.shade900,
-                                ),
-                                decoration: InputDecoration(
-                                  hintText: 'Enter cash amount',
-                                  hintStyle: TextStyle(
-                                    color: Colors.grey.shade500,
-                                    fontSize: isTablet ? 14 : 12,
+                            Text(
+                              'Cash',
+                              style: TextStyle(
+                                fontSize: isTablet ? 15 : 13,
+                                fontWeight: FontWeight.w600,
+                                color: Colors.grey.shade800,
+                              ),
+                            ),
+                            const Spacer(),
+                            SizedBox(
+                              width: isTablet ? 190 : 150,
+                              child: Row(
+                                children: [
+                                  Text(
+                                    _currencySymbol,
+                                    style: TextStyle(
+                                      fontSize: isTablet ? 15 : 13,
+                                      fontWeight: FontWeight.w600,
+                                      color: Colors.grey.shade700,
+                                    ),
                                   ),
-                                  border: InputBorder.none,
-                                  contentPadding: EdgeInsets.zero,
-                                ),
-                                onChanged: (value) {
-                                  final cashAmount =
-                                      double.tryParse(value) ?? 0;
-                                  _updatePaidAmount(cashAmount);
-                                },
+                                  SizedBox(width: isTablet ? 6 : 4),
+                                  Expanded(
+                                    child: TextField(
+                                      controller: _cashAmountCtrl,
+                                      textAlign: TextAlign.end,
+                                      keyboardType:
+                                          const TextInputType.numberWithOptions(
+                                              decimal: true),
+                                      style: TextStyle(
+                                        fontSize: fontSize,
+                                        fontWeight: FontWeight.w600,
+                                        color: Colors.grey.shade900,
+                                      ),
+                                      decoration: InputDecoration(
+                                        hintText: 'Enter amount',
+                                        hintStyle: TextStyle(
+                                          color: Colors.grey.shade500,
+                                          fontSize: isTablet ? 14 : 12,
+                                        ),
+                                        isDense: true,
+                                        border: InputBorder.none,
+                                        contentPadding: EdgeInsets.zero,
+                                      ),
+                                      onChanged: (value) {
+                                        final cashAmount =
+                                            double.tryParse(value) ?? 0;
+                                        _updatePaidAmount(cashAmount);
+                                      },
+                                    ),
+                                  ),
+                                ],
                               ),
                             ),
                           ],
                         ),
-                      ),
-                      SizedBox(height: isTablet ? 12 : 8),
-                      Row(
-                        children: [
-                          Container(
-                            width: isTablet ? 20 : 16,
-                            height: isTablet ? 20 : 16,
-                            decoration: BoxDecoration(
-                              color: Colors.green.shade100,
-                              borderRadius: BorderRadius.circular(4),
-                              border: Border.all(color: Colors.green.shade300),
-                            ),
-                            child: Icon(
-                              Icons.account_balance_wallet,
-                              size: isTablet ? 12 : 10,
-                              color: Colors.green.shade600,
-                            ),
-                          ),
-                          SizedBox(width: isTablet ? 8 : 6),
-                          Text(
-                            'Cash',
-                            style: TextStyle(
-                              fontSize: isTablet ? 14 : 12,
-                              fontWeight: FontWeight.w500,
-                              color: Colors.grey.shade700,
-                            ),
-                          ),
-                          Spacer(),
-                          Icon(
-                            Icons.delete_outline,
-                            color: Colors.red.shade400,
-                            size: isTablet ? 18 : 16,
-                          ),
-                        ],
                       ),
                     ],
                   ),
@@ -754,7 +818,7 @@ class _SalesInvoiceFormScreenState
                             Row(
                               children: [
                                 Text(
-                                  'RS ',
+                                  '$_currencySymbol ',
                                   style: TextStyle(
                                     fontSize: isTablet ? 14 : 12,
                                     color: Colors.grey.shade700,
@@ -791,7 +855,7 @@ class _SalesInvoiceFormScreenState
                             Row(
                               children: [
                                 Text(
-                                  'RS ',
+                                  '$_currencySymbol ',
                                   style: TextStyle(
                                     fontSize: isTablet ? 14 : 12,
                                     color: Colors.grey.shade700,
@@ -829,7 +893,7 @@ class _SalesInvoiceFormScreenState
                               Row(
                                 children: [
                                   Text(
-                                    'RS ',
+                                    '$_currencySymbol ',
                                     style: TextStyle(
                                       fontSize: isTablet ? 14 : 12,
                                       color: Colors.grey.shade700,
@@ -866,7 +930,7 @@ class _SalesInvoiceFormScreenState
                               Row(
                                 children: [
                                   Text(
-                                    'RS ',
+                                    '$_currencySymbol ',
                                     style: TextStyle(
                                       fontSize: isTablet ? 14 : 12,
                                       color: Colors.grey.shade700,
@@ -1188,295 +1252,136 @@ class _SalesInvoiceFormScreenState
 
     return partyAsync.when(
       data: (parties) {
-        // Show all parties regardless of type
         final allParties = parties.toList();
-        final searchQuery = _customerSearchCtrl.text.toLowerCase();
-        final filtered = allParties
-            .where((c) => c.name.toLowerCase().contains(searchQuery))
-            .toList();
 
         return Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            // Single row with customer selector and balance
-            Row(
-              children: [
-                // Customer Selector (left side)
-                Expanded(
-                  flex: _selectedCustomer != null ? 2 : 1,
-                  child: Container(
-                    decoration: BoxDecoration(
-                      borderRadius: BorderRadius.circular(12),
-                      border: Border.all(
-                        color: _selectedCustomer != null
-                            ? const Color(0xFFFF8C42)
-                            : Colors.grey.shade300,
-                        width: 2,
-                      ),
-                      color: Colors.white,
-                      boxShadow: _customerSearchFocus.hasFocus
-                          ? [
-                              BoxShadow(
-                                color: Colors.grey.shade200,
-                                blurRadius: 4,
-                                offset: const Offset(0, 2),
-                              ),
-                            ]
-                          : null,
-                    ),
-                    child: TextField(
-                      controller: _customerSearchCtrl,
-                      focusNode: _customerSearchFocus,
-                      onChanged: (value) => setState(() {}),
-                      onTap: () {
-                        // Show all customers when field is tapped
-                        setState(() {});
-                      },
-                      decoration: InputDecoration(
-                        hintText: _selectedCustomer?.name ?? 'Search Party',
-                        hintStyle: TextStyle(
-                          color: _selectedCustomer?.name != null
-                              ? Colors.grey.shade900
-                              : Colors.grey.shade500,
-                          fontSize: isTablet ? 15 : 13,
-                        ),
-                        prefixIcon: Icon(
-                          Icons.business,
-                          size: isTablet ? 20 : 18,
-                          color: _selectedCustomer != null
-                              ? const Color(0xFFFF8C42)
-                              : Colors.grey.shade400,
-                        ),
-                        suffixIcon: _selectedCustomer != null
-                            ? IconButton(
-                                icon:
-                                    Icon(Icons.clear, size: isTablet ? 18 : 16),
-                                onPressed: () {
-                                  setState(() {
-                                    _selectedCustomer = null;
-                                    _customerSearchCtrl.clear();
-                                  });
-                                },
-                              )
-                            : null,
-                        border: InputBorder.none,
-                        contentPadding: EdgeInsets.symmetric(
-                          horizontal: isTablet ? 12 : 10,
-                          vertical: isTablet ? 12 : 10,
-                        ),
-                      ),
+            // Searchable Dropdown Party Selector
+            SearchableDropdown<Party>(
+              items: allParties,
+              itemBuilder: (party) => ListTile(
+                dense: true,
+                leading: CircleAvatar(
+                  radius: isTablet ? 16 : 14,
+                  backgroundColor: Colors.blue.shade100,
+                  child: Text(
+                    party.name.isNotEmpty ? party.name[0].toUpperCase() : 'P',
+                    style: TextStyle(
+                      fontSize: isTablet ? 14 : 12,
+                      fontWeight: FontWeight.bold,
+                      color: Colors.blue.shade700,
                     ),
                   ),
                 ),
-                // Customer Current Balance Display (right side)
-                if (_selectedCustomer != null) ...[
-                  SizedBox(width: isTablet ? 12 : 8),
-                  Expanded(
-                    flex: 1,
-                    child: FutureBuilder<Map<String, double>>(
-                      future: _getCustomerBalances(_selectedCustomer!.id),
-                      builder: (context, snapshot) {
-                        final balances = snapshot.data ?? {'current': 0.0};
-                        final liveBalance = balances['current'] ?? 0.0;
-                        final isLoading =
-                            snapshot.connectionState == ConnectionState.waiting;
+                title: Text(
+                  party.name,
+                  style: TextStyle(
+                    fontSize: isTablet ? 14 : 12,
+                    fontWeight: FontWeight.w500,
+                  ),
+                ),
+                trailing: Icon(
+                  Icons.arrow_forward_ios,
+                  size: isTablet ? 14 : 12,
+                  color: Colors.grey.shade400,
+                ),
+              ),
+              searchMatcher: (party) => party.name,
+              onSelected: _onCustomerSelected,
+              hintText: _selectedCustomer?.name ?? 'Search Party',
+              headerBuilder: _buildPartyModalHeader,
+              isSelected: _selectedCustomer != null,
+              onClear: _selectedCustomer != null
+                  ? () => _clearCustomerSelection()
+                  : null,
+              maxHeight: 300,
+            ),
 
-                        return Container(
-                          decoration: BoxDecoration(
-                            color: liveBalance <= 0
-                                ? Colors.green.shade50
-                                : Colors.orange.shade50,
-                            borderRadius: BorderRadius.circular(12),
-                            border: Border.all(
-                              color: liveBalance <= 0
-                                  ? Colors.green.shade300
-                                  : Colors.orange.shade300,
-                              width: 1.5,
+            // Customer Current Balance Display (shown below when customer is selected)
+            if (_selectedCustomer != null) ...[
+              SizedBox(height: isTablet ? 12 : 8),
+              FutureBuilder<Map<String, double>>(
+                future: _getCustomerBalances(_selectedCustomer!.id),
+                builder: (context, snapshot) {
+                  final balances = snapshot.data ?? {'current': 0.0};
+                  final liveBalance = balances['current'] ?? 0.0;
+                  final isLoading =
+                      snapshot.connectionState == ConnectionState.waiting;
+
+                  return Container(
+                    width: double.infinity,
+                    decoration: BoxDecoration(
+                      color: liveBalance <= 0
+                          ? Colors.green.shade50
+                          : Colors.orange.shade50,
+                      borderRadius: BorderRadius.circular(12),
+                      border: Border.all(
+                        color: liveBalance <= 0
+                            ? Colors.green.shade300
+                            : Colors.orange.shade300,
+                        width: 1.5,
+                      ),
+                    ),
+                    padding: EdgeInsets.symmetric(
+                      horizontal: isTablet ? 12 : 8,
+                      vertical: isTablet ? 12 : 10,
+                    ),
+                    child: Row(
+                      children: [
+                        if (isLoading)
+                          SizedBox(
+                            width: isTablet ? 16 : 14,
+                            height: isTablet ? 16 : 14,
+                            child: CircularProgressIndicator(
+                              strokeWidth: 2,
+                              color: Colors.grey.shade600,
                             ),
+                          )
+                        else
+                          Icon(
+                            liveBalance <= 0
+                                ? Icons.check_circle_outline
+                                : Icons.account_balance_wallet,
+                            size: isTablet ? 18 : 16,
+                            color: liveBalance <= 0
+                                ? Colors.green.shade600
+                                : Colors.orange.shade700,
                           ),
-                          padding: EdgeInsets.symmetric(
-                            horizontal: isTablet ? 12 : 8,
-                            vertical: isTablet ? 12 : 10,
-                          ),
-                          child: Row(
+                        SizedBox(width: isTablet ? 8 : 4),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
-                              if (isLoading)
-                                SizedBox(
-                                  width: isTablet ? 16 : 14,
-                                  height: isTablet ? 16 : 14,
-                                  child: CircularProgressIndicator(
-                                    strokeWidth: 2,
-                                    color: Colors.grey.shade600,
-                                  ),
-                                )
-                              else
-                                Icon(
-                                  liveBalance <= 0
-                                      ? Icons.check_circle_outline
-                                      : Icons.account_balance_wallet,
-                                  size: isTablet ? 18 : 16,
+                              Text(
+                                'Prev. Balance',
+                                style: TextStyle(
+                                  fontSize: isTablet ? 9 : 8,
+                                  color: Colors.grey.shade600,
+                                  fontWeight: FontWeight.w500,
+                                ),
+                              ),
+                              Text(
+                                isLoading
+                                    ? '...'
+                                    : '$_currencySymbol ${liveBalance.toStringAsFixed(0)}',
+                                style: TextStyle(
+                                  fontSize: isTablet ? 11 : 10,
+                                  fontWeight: FontWeight.w600,
                                   color: liveBalance <= 0
                                       ? Colors.green.shade600
                                       : Colors.orange.shade700,
                                 ),
-                              SizedBox(width: isTablet ? 8 : 4),
-                              Expanded(
-                                child: Column(
-                                  crossAxisAlignment: CrossAxisAlignment.start,
-                                  children: [
-                                    Text(
-                                      'Prev. Balance',
-                                      style: TextStyle(
-                                        fontSize: isTablet ? 9 : 8,
-                                        color: Colors.grey.shade600,
-                                        fontWeight: FontWeight.w500,
-                                      ),
-                                    ),
-                                    Text(
-                                      isLoading
-                                          ? '...'
-                                          : 'Rs ${liveBalance.toStringAsFixed(0)}',
-                                      style: TextStyle(
-                                        fontSize: isTablet ? 11 : 10,
-                                        fontWeight: FontWeight.w600,
-                                        color: liveBalance <= 0
-                                            ? Colors.green.shade600
-                                            : Colors.orange.shade700,
-                                      ),
-                                    ),
-                                  ],
-                                ),
                               ),
                             ],
                           ),
-                        );
-                      },
-                    ),
-                  ),
-                ],
-              ],
-            ),
-
-            // Dropdown suggestions - show all customers when focused or when searching
-            if (_customerSearchFocus.hasFocus || searchQuery.isNotEmpty)
-              Container(
-                // decoration: BoxDecoration(
-                //   color: Colors.white,
-                //   border: Border(
-                //     left: BorderSide(color: Colors.grey.shade300),
-                //     right: BorderSide(color: Colors.grey.shade300),
-                //     bottom: BorderSide(color: Colors.grey.shade300),
-                //   ),
-                //   borderRadius: const BorderRadius.only(
-                //     bottomLeft: Radius.circular(8),
-                //     bottomRight: Radius.circular(8),
-                //   ),
-                // ),
-                constraints: BoxConstraints(
-                  maxHeight: searchQuery.isEmpty
-                      ? (allParties.length * (isTablet ? 65.0 : 55.0)) +
-                          (_selectedCustomer == null
-                              ? (isTablet ? 70.0 : 60.0)
-                              : 0)
-                      : (filtered.length * (isTablet ? 65.0 : 55.0)) +
-                          (_selectedCustomer == null
-                              ? (isTablet ? 70.0 : 60.0)
-                              : 0),
-                ),
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    // Add New Party button (only show when no customer is selected)
-                    if (_selectedCustomer == null)
-                      Container(
-                        width: double.infinity,
-                        decoration: BoxDecoration(
-                          color: Colors.green.shade50,
-                          border: Border(
-                            bottom: BorderSide(color: Colors.grey.shade200),
-                          ),
                         ),
-                        child: ListTile(
-                          dense: true,
-                          leading: Icon(
-                            Icons.person_add,
-                            color: Colors.green.shade600,
-                            size: isTablet ? 20 : 18,
-                          ),
-                          title: Text(
-                            searchQuery.isNotEmpty
-                                ? 'Add "$searchQuery" as new supplier'
-                                : 'Add New Supplier',
-                            style: TextStyle(
-                              fontSize: isTablet ? 14 : 12,
-                              fontWeight: FontWeight.w600,
-                              color: Colors.green.shade700,
-                            ),
-                          ),
-                          trailing: Icon(
-                            Icons.arrow_forward_ios,
-                            size: isTablet ? 16 : 14,
-                            color: Colors.green.shade600,
-                          ),
-                          onTap: () {
-                            if (searchQuery.isNotEmpty) {
-                              _addNewPartyWithName(searchQuery);
-                            } else {
-                              _addNewParty();
-                            }
-                          },
-                        ),
-                      ),
-                    // Existing customers list
-                    Flexible(
-                      child: ListView.builder(
-                        shrinkWrap: true,
-                        physics: const ClampingScrollPhysics(),
-                        itemCount: searchQuery.isEmpty
-                            ? allParties.length
-                            : filtered.length,
-                        itemBuilder: (context, index) {
-                          final party = searchQuery.isEmpty
-                              ? allParties[index]
-                              : filtered[index];
-                          return ListTile(
-                            dense: true,
-                            leading: CircleAvatar(
-                              radius: isTablet ? 16 : 14,
-                              backgroundColor: Colors.blue.shade100,
-                              child: Text(
-                                party.name.isNotEmpty
-                                    ? party.name[0].toUpperCase()
-                                    : 'C',
-                                style: TextStyle(
-                                  fontSize: isTablet ? 14 : 12,
-                                  fontWeight: FontWeight.bold,
-                                  color: Colors.blue.shade700,
-                                ),
-                              ),
-                            ),
-                            title: Text(
-                              party.name,
-                              style: TextStyle(
-                                fontSize: isTablet ? 14 : 12,
-                                fontWeight: FontWeight.w500,
-                              ),
-                            ),
-                            trailing: Icon(
-                              Icons.arrow_forward_ios,
-                              size: isTablet ? 14 : 12,
-                              color: Colors.grey.shade400,
-                            ),
-                            onTap: () {
-                              _onCustomerSelected(party);
-                            },
-                          );
-                        },
-                      ),
+                      ],
                     ),
-                  ],
-                ),
+                  );
+                },
               ),
+            ],
           ],
         );
       },
@@ -1492,464 +1397,488 @@ class _SalesInvoiceFormScreenState
     );
   }
 
-  Widget _buildLineItem(
-    BuildContext context,
-    SaleLineDraft line,
-    List<Product> products,
-    int index,
-  ) {
+  /// Header widget for the SearchableDropdown modal with Add New Party button
+  Widget _buildPartyModalHeader(String searchQuery) {
     final isTablet = MediaQuery.of(context).size.width > 600;
-    final amount = (line.qty * line.rate).toStringAsFixed(2);
-
-    // Ensure controllers exist for this index
-    if (!_qtyControllers.containsKey(index)) {
-      _qtyControllers[index] = TextEditingController(
-        text: line.qty > 0
-            ? (line.qty == line.qty.roundToDouble()
-                ? line.qty.toStringAsFixed(0)
-                : line.qty.toString())
-            : '',
-      );
-    }
-    if (!_rateControllers.containsKey(index)) {
-      _rateControllers[index] = TextEditingController(
-        text: line.rate > 0 ? line.rate.toStringAsFixed(2) : '',
-      );
-    }
 
     return Container(
+      width: double.infinity,
       decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: Colors.grey.shade300),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.grey.shade100,
-            blurRadius: 4,
-            offset: const Offset(0, 2),
-          ),
-        ],
+        color: Colors.green.shade50,
+        border: Border(
+          bottom: BorderSide(color: Colors.grey.shade200),
+        ),
       ),
-      padding: EdgeInsets.all(isTablet ? 16 : 12),
-      child: Row(
-        children: [
-          // Product Name and Calculation
-          Expanded(
-            flex: 3,
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  line.productName ?? 'Tap to select product',
-                  style: TextStyle(
-                    fontSize: isTablet ? 16 : 14,
-                    fontWeight: FontWeight.w600,
-                  ),
-                ),
-                const SizedBox(height: 2),
-                Text(
-                  '${line.qty.toStringAsFixed(line.qty == line.qty.roundToDouble() ? 0 : 2)} X ${line.rate.toStringAsFixed(2)} = $amount',
-                  style: TextStyle(
-                    fontSize: isTablet ? 12 : 11,
-                    color: Colors.grey.shade600,
-                  ),
-                ),
-              ],
+      child: SafeArea(
+        bottom: false,
+        child: ListTile(
+          dense: true,
+          leading: Icon(
+            Icons.person_add,
+            color: Colors.green.shade600,
+            size: isTablet ? 20 : 18,
+          ),
+          title: Text(
+            searchQuery.isNotEmpty
+                ? 'Add "$searchQuery" as new supplier'
+                : 'Add New Supplier',
+            style: TextStyle(
+              fontSize: isTablet ? 14 : 12,
+              fontWeight: FontWeight.w600,
+              color: Colors.green.shade700,
             ),
           ),
-          const SizedBox(width: 8),
-          // Quantity Field
-          SizedBox(
-            width: isTablet ? 80 : 60,
-            height: isTablet ? 40 : 35,
-            child: TextFormField(
-              controller: _qtyControllers[index],
-              textAlign: TextAlign.center,
-              keyboardType:
-                  const TextInputType.numberWithOptions(decimal: true),
-              textInputAction: TextInputAction.done,
-              style: TextStyle(fontSize: isTablet ? 14 : 12),
-              decoration: InputDecoration(
-                border: const OutlineInputBorder(),
-                contentPadding: EdgeInsets.symmetric(
-                  vertical: isTablet ? 8 : 6,
-                  horizontal: 4,
-                ),
-                isDense: true,
-              ),
-              onChanged: (value) {
-                if (value.isNotEmpty) {
-                  final qty = double.tryParse(value);
-                  if (qty != null && qty > 0 && qty != line.qty) {
-                    setState(() {
-                      line.qty = qty;
-                    });
-                    _onLineItemChanged(); // Trigger recalculation
-                  }
-                }
-              },
-            ),
+          trailing: Icon(
+            Icons.arrow_forward_ios,
+            size: isTablet ? 16 : 14,
+            color: Colors.green.shade600,
           ),
-          const SizedBox(width: 8),
-
-          const SizedBox(width: 8),
-          // Rate Field
-          SizedBox(
-            width: isTablet ? 100 : 80,
-            height: isTablet ? 40 : 35,
-            child: TextFormField(
-              controller: _rateControllers[index],
-              keyboardType:
-                  const TextInputType.numberWithOptions(decimal: true),
-              textInputAction: TextInputAction.done,
-              style: TextStyle(fontSize: isTablet ? 14 : 12),
-              decoration: InputDecoration(
-                labelText: 'Rate',
-                labelStyle: TextStyle(fontSize: isTablet ? 12 : 10),
-                border: const OutlineInputBorder(),
-                isDense: true,
-                contentPadding: EdgeInsets.symmetric(
-                  horizontal: isTablet ? 12 : 8,
-                  vertical: isTablet ? 8 : 6,
-                ),
-              ),
-              onChanged: (v) {
-                if (v.isNotEmpty) {
-                  final rate = double.tryParse(v);
-                  if (rate != null && rate != line.rate) {
-                    setState(() {
-                      line.rate = rate;
-                    });
-                    _onLineItemChanged(); // Trigger recalculation
-                  }
-                }
-              },
-            ),
-          ),
-        ],
+          onTap: () {
+            if (searchQuery.isNotEmpty) {
+              _addNewPartyWithName(searchQuery);
+            } else {
+              _addNewParty();
+            }
+          },
+        ),
       ),
     );
   }
 
-  Widget _buildAddItemsSearch(bool isTablet, double fontSize,
-      BuildContext context, List<Product> products) {
-    final searchQuery = _itemSearchCtrl.text.toLowerCase();
+  Widget _buildProductsTable(bool isTablet) {
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final horizontalCellPadding = isTablet ? 6.0 : 4.0;
+        final tableInnerWidth =
+            (constraints.maxWidth - 8).clamp(260.0, 1800.0).toDouble();
 
-    // Enhanced search - search by name, SKU, and category
-    final filtered = searchQuery.isEmpty
-        ? products // Show all products when no search query
-        : products.where((p) {
-            final nameMatch = p.name.toLowerCase().contains(searchQuery);
-            final skuMatch = p.sku.toLowerCase().contains(searchQuery);
-            return nameMatch || skuMatch;
-          }).toList();
+        var actionColumnWidth = (isTablet ? 0.05 : 0.06) * tableInnerWidth;
+        var qtyColumnWidth = (isTablet ? 0.12 : 0.13) * tableInnerWidth;
+        var rateColumnWidth = (isTablet ? 0.15 : 0.16) * tableInnerWidth;
+        var amountColumnWidth = (isTablet ? 0.19 : 0.20) * tableInnerWidth;
 
-    // Sort filtered results by relevance (exact matches first, then partial matches)
-    if (searchQuery.isNotEmpty) {
-      filtered.sort((a, b) {
-        final aNameExact = a.name.toLowerCase() == searchQuery;
-        final bNameExact = b.name.toLowerCase() == searchQuery;
-        final aSkuExact = a.sku.toLowerCase() == searchQuery;
-        final bSkuExact = b.sku.toLowerCase() == searchQuery;
+        final minAction = isTablet ? 28.0 : 24.0;
+        final minQty = isTablet ? 52.0 : 46.0;
+        final minRate = isTablet ? 64.0 : 52.0;
+        final minAmount = isTablet ? 86.0 : 72.0;
+        final minProduct = isTablet ? 180.0 : 110.0;
 
-        if (aNameExact && !bNameExact) return -1;
-        if (bNameExact && !aNameExact) return 1;
-        if (aSkuExact && !bSkuExact) return -1;
-        if (bSkuExact && !aSkuExact) return 1;
+        if (actionColumnWidth < minAction) actionColumnWidth = minAction;
+        if (qtyColumnWidth < minQty) qtyColumnWidth = minQty;
+        if (rateColumnWidth < minRate) rateColumnWidth = minRate;
+        if (amountColumnWidth < minAmount) amountColumnWidth = minAmount;
 
-        return a.name.compareTo(b.name);
-      });
-    }
+        var productColumnWidth = tableInnerWidth -
+            (qtyColumnWidth +
+                rateColumnWidth +
+                amountColumnWidth +
+                actionColumnWidth);
 
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Container(
+        if (productColumnWidth < minProduct) {
+          var deficit = minProduct - productColumnWidth;
+
+          final amountReducible = amountColumnWidth - minAmount;
+          if (amountReducible > 0 && deficit > 0) {
+            final cut = amountReducible < deficit ? amountReducible : deficit;
+            amountColumnWidth -= cut;
+            deficit -= cut;
+          }
+
+          final rateReducible = rateColumnWidth - minRate;
+          if (rateReducible > 0 && deficit > 0) {
+            final cut = rateReducible < deficit ? rateReducible : deficit;
+            rateColumnWidth -= cut;
+            deficit -= cut;
+          }
+
+          final qtyReducible = qtyColumnWidth - minQty;
+          if (qtyReducible > 0 && deficit > 0) {
+            final cut = qtyReducible < deficit ? qtyReducible : deficit;
+            qtyColumnWidth -= cut;
+            deficit -= cut;
+          }
+
+          final actionReducible = actionColumnWidth - minAction;
+          if (actionReducible > 0 && deficit > 0) {
+            final cut = actionReducible < deficit ? actionReducible : deficit;
+            actionColumnWidth -= cut;
+            deficit -= cut;
+          }
+
+          productColumnWidth = tableInnerWidth -
+              (qtyColumnWidth +
+                  rateColumnWidth +
+                  amountColumnWidth +
+                  actionColumnWidth);
+        }
+
+        final columns = TableColumnsBuilder<SaleLineDraft>()
+          ..addColumn(
+            'product',
+            TablePlusColumn<SaleLineDraft>(
+              key: 'product',
+              label: 'Product',
+              order: 1,
+              width: productColumnWidth,
+              sortable: false,
+              valueAccessor: (line) => line.productName ?? 'Select product',
+              statefulCellBuilder: (context, row, isSelected, isDim) {
+                return Text(
+                  row.productName ?? 'Select product',
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    fontSize: isTablet ? 13 : 11,
+                    fontWeight: FontWeight.w600,
+                    color: Colors.grey.shade900,
+                  ),
+                );
+              },
+            ),
+          )
+          ..addColumn(
+            'qty',
+            TablePlusColumn<SaleLineDraft>(
+              key: 'qty',
+              label: 'Qty',
+              order: 2,
+              width: qtyColumnWidth,
+              sortable: false,
+              alignment: Alignment.center,
+              textAlign: TextAlign.center,
+              valueAccessor: (line) => line.qty,
+              statefulCellBuilder: (context, row, isSelected, isDim) {
+                final index = _lines.indexOf(row);
+                if (index < 0) return const SizedBox.shrink();
+                _ensureLineControllers(index, row);
+
+                return SizedBox(
+                  height: isTablet ? 34 : 30,
+                  child: TextFormField(
+                    controller: _qtyControllers[index],
+                    textAlign: TextAlign.center,
+                    keyboardType:
+                        const TextInputType.numberWithOptions(decimal: true),
+                    textInputAction: TextInputAction.done,
+                    style: TextStyle(fontSize: isTablet ? 12 : 11),
+                    decoration: const InputDecoration(
+                      border: OutlineInputBorder(),
+                      isDense: true,
+                      contentPadding: EdgeInsets.symmetric(
+                        vertical: 6,
+                        horizontal: 4,
+                      ),
+                    ),
+                    onChanged: (value) {
+                      if (value.isNotEmpty) {
+                        final qty = double.tryParse(value);
+                        if (qty != null && qty > 0 && qty != row.qty) {
+                          setState(() {
+                            row.qty = qty;
+                          });
+                          _onLineItemChanged();
+                        }
+                      }
+                    },
+                  ),
+                );
+              },
+            ),
+          )
+          ..addColumn(
+            'rate',
+            TablePlusColumn<SaleLineDraft>(
+              key: 'rate',
+              label: 'Rate',
+              order: 3,
+              width: rateColumnWidth,
+              sortable: false,
+              alignment: Alignment.center,
+              textAlign: TextAlign.center,
+              valueAccessor: (line) => line.rate,
+              statefulCellBuilder: (context, row, isSelected, isDim) {
+                final index = _lines.indexOf(row);
+                if (index < 0) return const SizedBox.shrink();
+                _ensureLineControllers(index, row);
+
+                return SizedBox(
+                  height: isTablet ? 34 : 30,
+                  child: TextFormField(
+                    controller: _rateControllers[index],
+                    textAlign: TextAlign.center,
+                    keyboardType:
+                        const TextInputType.numberWithOptions(decimal: true),
+                    textInputAction: TextInputAction.done,
+                    style: TextStyle(fontSize: isTablet ? 12 : 11),
+                    decoration: const InputDecoration(
+                      border: OutlineInputBorder(),
+                      isDense: true,
+                      contentPadding: EdgeInsets.symmetric(
+                        vertical: 6,
+                        horizontal: 4,
+                      ),
+                    ),
+                    onChanged: (value) {
+                      if (value.isNotEmpty) {
+                        final rate = double.tryParse(value);
+                        if (rate != null && rate != row.rate) {
+                          setState(() {
+                            row.rate = rate;
+                          });
+                          _onLineItemChanged();
+                        }
+                      }
+                    },
+                  ),
+                );
+              },
+            ),
+          )
+          ..addColumn(
+            'amount',
+            TablePlusColumn<SaleLineDraft>(
+              key: 'amount',
+              label: 'Amount ($_currencySymbol)',
+              order: 4,
+              width: amountColumnWidth,
+              sortable: false,
+              alignment: Alignment.centerRight,
+              textAlign: TextAlign.right,
+              valueAccessor: (line) => line.qty * line.rate,
+              statefulCellBuilder: (context, row, isSelected, isDim) {
+                final amount = row.qty * row.rate;
+                return Text(
+                  amount.toStringAsFixed(2),
+                  textAlign: TextAlign.end,
+                  style: TextStyle(
+                    fontSize: isTablet ? 12 : 11,
+                    fontWeight: FontWeight.w700,
+                    color: Colors.grey.shade900,
+                  ),
+                );
+              },
+            ),
+          )
+          ..addColumn(
+            'action',
+            TablePlusColumn<SaleLineDraft>(
+              key: 'action',
+              label: '',
+              order: 5,
+              width: actionColumnWidth,
+              sortable: false,
+              alignment: Alignment.center,
+              textAlign: TextAlign.center,
+              valueAccessor: (line) => '',
+              statefulCellBuilder: (context, row, isSelected, isDim) {
+                final index = _lines.indexOf(row);
+                return IconButton(
+                  tooltip: 'Delete product',
+                  padding: EdgeInsets.zero,
+                  constraints: BoxConstraints.tightFor(
+                    width: isTablet ? 26 : 22,
+                    height: isTablet ? 26 : 22,
+                  ),
+                  visualDensity: VisualDensity.compact,
+                  onPressed: index < 0 ? null : () => _removeLineAt(index),
+                  icon: Icon(
+                    Icons.delete_outline,
+                    size: isTablet ? 17 : 15,
+                    color: Colors.red.shade500,
+                  ),
+                );
+              },
+            ),
+          );
+
+        final headerHeight = isTablet ? 40.0 : 36.0;
+        final rowHeight = isTablet ? 42.0 : 38.0;
+        final footerHeight = isTablet ? 34.0 : 30.0;
+        final visibleRows = _lines.isEmpty ? 1 : _lines.length;
+        final totalQty = _lines.fold<double>(0, (sum, line) => sum + line.qty);
+        final totalAmount =
+            _lines.fold<double>(0, (sum, line) => sum + (line.qty * line.rate));
+
+        return Container(
           decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(8),
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(12),
             border: Border.all(color: Colors.grey.shade300),
           ),
-          child: TextField(
-            controller: _itemSearchCtrl,
-            focusNode: _itemSearchFocus,
-            onChanged: (value) => setState(() {}),
-            onTap: () {
-              setState(() {});
-            },
-            decoration: InputDecoration(
-              hintText: 'Search & Add Items (Name, SKU)...',
-              hintStyle: TextStyle(
-                color: Colors.grey.shade500,
-                fontSize: isTablet ? 15 : 13,
-              ),
-              prefixIcon: Icon(
-                Icons.search,
-                size: isTablet ? 22 : 20,
-                color: Colors.red.shade600,
-              ),
-              suffixIcon: Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  if (_itemSearchCtrl.text.isNotEmpty)
-                    IconButton(
-                      icon: Icon(Icons.clear, size: isTablet ? 18 : 16),
-                      onPressed: () {
-                        setState(() {
-                          _itemSearchCtrl.clear();
-                        });
-                      },
-                    ),
-                  Icon(
-                    Icons.add_circle_outline,
-                    size: isTablet ? 20 : 18,
-                    color: Colors.red.shade600,
-                  ),
-                  SizedBox(width: isTablet ? 8 : 6),
-                ],
-              ),
-              border: InputBorder.none,
-              contentPadding: EdgeInsets.symmetric(
-                horizontal: isTablet ? 12 : 10,
-                vertical: isTablet ? 12 : 10,
-              ),
-            ),
-          ),
-        ),
-        // Enhanced dropdown suggestions - show items when search is focused or has text
-        if (_itemSearchFocus.hasFocus || _itemSearchCtrl.text.isNotEmpty)
-          Container(
-            decoration: BoxDecoration(
-              color: Colors.white,
-              border: Border(
-                left: BorderSide(color: Colors.grey.shade300),
-                right: BorderSide(color: Colors.grey.shade300),
-                bottom: BorderSide(color: Colors.grey.shade300),
-              ),
-              borderRadius: const BorderRadius.only(
-                bottomLeft: Radius.circular(8),
-                bottomRight: Radius.circular(8),
-              ),
-            ),
-            constraints: BoxConstraints(
-              maxHeight: isTablet ? 300 : 250,
-            ),
+          padding: const EdgeInsets.all(3),
+          child: SizedBox(
+            height: headerHeight + (visibleRows * rowHeight) + footerHeight,
             child: Column(
               children: [
-                // Header showing count
-                Container(
-                  padding: EdgeInsets.symmetric(
-                    horizontal: isTablet ? 12 : 10,
-                    vertical: isTablet ? 8 : 6,
-                  ),
-                  decoration: BoxDecoration(
-                    color: Colors.grey.shade50,
-                    border: Border(
-                      bottom: BorderSide(color: Colors.grey.shade200),
-                    ),
-                  ),
-                  child: Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                    children: [
-                      Text(
-                        searchQuery.isEmpty
-                            ? 'All Items (${filtered.length})'
-                            : 'Found ${filtered.length} items',
-                        style: TextStyle(
+                Expanded(
+                  child: FlutterTablePlus<SaleLineDraft>(
+                    columns: columns.build(),
+                    data: _lines,
+                    rowId: (line) =>
+                        '${line.productId ?? 'line'}-${_lines.indexOf(line)}',
+                    sortColumnKey: null,
+                    sortDirection: SortDirection.none,
+                    onSort: null,
+                    resizable: false,
+                    stretchLastColumn: false,
+                    theme: TablePlusTheme(
+                      scrollbarTheme:
+                          const TablePlusScrollbarTheme(showHorizontal: false),
+                      headerTheme: TablePlusHeaderTheme(
+                        height: headerHeight,
+                        padding: EdgeInsets.symmetric(
+                            horizontal: horizontalCellPadding),
+                        textStyle: TextStyle(
                           fontSize: isTablet ? 12 : 11,
                           fontWeight: FontWeight.w600,
-                          color: Colors.grey.shade700,
+                          color: const Color(0xFF212121),
                         ),
                       ),
-                      if (searchQuery.isNotEmpty)
-                        Text(
-                          'Tap to add',
-                          style: TextStyle(
-                            fontSize: isTablet ? 10 : 9,
-                            color: Colors.grey.shade500,
-                          ),
+                      bodyTheme: TablePlusBodyTheme(
+                        rowHeight: rowHeight,
+                        padding: EdgeInsets.symmetric(
+                            horizontal: horizontalCellPadding),
+                        textStyle: TextStyle(
+                          fontSize: isTablet ? 12 : 11,
+                          color: const Color(0xFF212121),
                         ),
-                    ],
+                      ),
+                    ),
+                    noDataWidget: Center(
+                      child: Text(
+                        'No items added yet. Use product dropdown below to add items.',
+                        style: TextStyle(
+                          fontSize: isTablet ? 12 : 11,
+                          color: Colors.grey.shade600,
+                        ),
+                      ),
+                    ),
                   ),
                 ),
-                // Items list
-                Expanded(
-                  child: filtered.isEmpty
-                      ? Container(
-                          padding: EdgeInsets.all(isTablet ? 20 : 16),
-                          child: Center(
-                            child: Column(
-                              mainAxisAlignment: MainAxisAlignment.center,
-                              children: [
-                                Icon(
-                                  Icons.inventory_2_outlined,
-                                  size: isTablet ? 32 : 28,
-                                  color: Colors.grey.shade400,
-                                ),
-                                SizedBox(height: isTablet ? 8 : 6),
-                                Text(
-                                  searchQuery.isNotEmpty
-                                      ? 'No items found for "$searchQuery"'
-                                      : 'No products available',
-                                  style: TextStyle(
-                                    fontSize: isTablet ? 14 : 12,
-                                    color: Colors.grey.shade600,
-                                  ),
-                                ),
-                              ],
+                Container(
+                  height: footerHeight,
+                  decoration: BoxDecoration(
+                    color: Colors.grey.shade100,
+                    border:
+                        Border(top: BorderSide(color: Colors.grey.shade300)),
+                  ),
+                  child: Row(
+                    children: [
+                      SizedBox(
+                        width: productColumnWidth,
+                        child: Padding(
+                          padding: EdgeInsets.symmetric(
+                              horizontal: horizontalCellPadding),
+                          child: Text(
+                            'Total',
+                            style: TextStyle(
+                              fontSize: isTablet ? 12 : 11,
+                              fontWeight: FontWeight.w700,
+                              color: Colors.grey.shade900,
                             ),
                           ),
-                        )
-                      : ListView.builder(
-                          shrinkWrap: true,
-                          itemCount: filtered.length,
-                          itemBuilder: (context, index) {
-                            final product = filtered[index];
-                            final isAlreadyAdded = _lines
-                                .any((line) => line.productId == product.id);
-
-                            return ListTile(
-                              dense: true,
-                              leading: Container(
-                                width: isTablet ? 40 : 32,
-                                height: isTablet ? 40 : 32,
-                                decoration: BoxDecoration(
-                                  color: Colors.red.shade50,
-                                  borderRadius: BorderRadius.circular(6),
-                                ),
-                                child: isAlreadyAdded
-                                    ? Stack(
-                                        children: [
-                                          Positioned.fill(
-                                            child: Icon(
-                                              Icons.add,
-                                              size: isTablet ? 20 : 16,
-                                              color: Colors.red.shade600,
-                                            ),
-                                          ),
-                                          Positioned(
-                                            top: 2,
-                                            right: 2,
-                                            child: Container(
-                                              width: 12,
-                                              height: 12,
-                                              decoration: BoxDecoration(
-                                                color: Colors.green,
-                                                shape: BoxShape.circle,
-                                              ),
-                                              child: Icon(
-                                                Icons.check,
-                                                size: 8,
-                                                color: Colors.white,
-                                              ),
-                                            ),
-                                          ),
-                                        ],
-                                      )
-                                    : Icon(
-                                        Icons.add,
-                                        size: isTablet ? 20 : 16,
-                                        color: Colors.red.shade600,
-                                      ),
-                              ),
-                              title: Text(
-                                product.name,
-                                style: TextStyle(
-                                  fontSize: isTablet ? 14 : 12,
-                                  fontWeight: FontWeight.w500,
-                                  color: Colors.grey.shade900,
-                                ),
-                              ),
-                              subtitle: Column(
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                children: [
-                                  FutureBuilder<double>(
-                                    future: _calculateCurrentStock(
-                                        ref.read(isarServiceProvider).isar,
-                                        ref.read(currentCompanyProvider)?.id ??
-                                            0,
-                                        product.id),
-                                    builder: (context, snap) {
-                                      final stock =
-                                          snap.data ?? product.openingQty;
-                                      final color = stock <= 0
-                                          ? Colors.red.shade600
-                                          : stock < 5
-                                              ? Colors.orange.shade700
-                                              : Colors.green.shade700;
-                                      return Text(
-                                        'Stock: ${stock.toStringAsFixed(1)}',
-                                        style: TextStyle(
-                                          fontSize: isTablet ? 10 : 9,
-                                          fontWeight: FontWeight.w500,
-                                          color: color,
-                                        ),
-                                      );
-                                    },
-                                  ),
-                                  Row(
-                                    children: [
-                                      Text(
-                                        'Rate: RS ${product.salePrice.toStringAsFixed(2)}',
-                                        style: TextStyle(
-                                          fontSize: isTablet ? 11 : 10,
-                                          fontWeight: FontWeight.w500,
-                                          color: Colors.red.shade700,
-                                        ),
-                                      ),
-                                      if (isAlreadyAdded) ...[
-                                        SizedBox(width: 8),
-                                        Container(
-                                          padding: EdgeInsets.symmetric(
-                                              horizontal: 6, vertical: 2),
-                                          decoration: BoxDecoration(
-                                            color: Colors.green.shade100,
-                                            borderRadius:
-                                                BorderRadius.circular(10),
-                                          ),
-                                          child: Text(
-                                            'Added',
-                                            style: TextStyle(
-                                              fontSize: isTablet ? 9 : 8,
-                                              fontWeight: FontWeight.w500,
-                                              color: Colors.green.shade700,
-                                            ),
-                                          ),
-                                        ),
-                                      ],
-                                    ],
-                                  ),
-                                ],
-                              ),
-                              onTap: () {
-                                setState(() {
-                                  _lines.add(SaleLineDraft(
-                                    productId: product.id,
-                                    productName: product.name,
-                                    qty: 1,
-                                    rate: product.salePrice,
-                                  ));
-                                  // Keep search field and items visible after selection
-                                });
-                                _onLineItemChanged(); // Trigger recalculation
-
-                                // Show success feedback
-                                ScaffoldMessenger.of(context).showSnackBar(
-                                  SnackBar(
-                                    content: Text(
-                                        '${product.name} added to invoice${isAlreadyAdded ? ' (duplicate)' : ''}'),
-                                    backgroundColor: Colors.green,
-                                    duration: const Duration(seconds: 1),
-                                  ),
-                                );
-                              },
-                            );
-                          },
                         ),
+                      ),
+                      SizedBox(
+                        width: qtyColumnWidth,
+                        child: Text(
+                          totalQty == totalQty.roundToDouble()
+                              ? totalQty.toStringAsFixed(0)
+                              : totalQty.toStringAsFixed(2),
+                          textAlign: TextAlign.center,
+                          style: TextStyle(
+                            fontSize: isTablet ? 12 : 11,
+                            fontWeight: FontWeight.w700,
+                            color: Colors.grey.shade900,
+                          ),
+                        ),
+                      ),
+                      SizedBox(width: rateColumnWidth),
+                      SizedBox(
+                        width: amountColumnWidth,
+                        child: Padding(
+                          padding: EdgeInsets.symmetric(
+                              horizontal: horizontalCellPadding),
+                          child: Text(
+                            totalAmount.toStringAsFixed(2),
+                            textAlign: TextAlign.end,
+                            style: TextStyle(
+                              fontSize: isTablet ? 12 : 11,
+                              fontWeight: FontWeight.w700,
+                              color: Colors.grey.shade900,
+                            ),
+                          ),
+                        ),
+                      ),
+                      SizedBox(width: actionColumnWidth),
+                    ],
+                  ),
                 ),
               ],
             ),
           ),
-      ],
+        );
+      },
+    );
+  }
+
+  Widget _buildProductSelectorDropdown(bool isTablet, List<Product> products) {
+    return SearchableDropdown<Product>(
+      items: products,
+      hintText: 'Search & Add Items (Name, SKU)...',
+      maxHeight: isTablet ? 320 : 260,
+      searchMatcher: (product) => '${product.name} ${product.sku}',
+      onSelected: _addProductToInvoice,
+      itemBuilder: (product) {
+        final isAlreadyAdded =
+            _lines.any((line) => line.productId == product.id);
+        return ListTile(
+          dense: true,
+          leading: CircleAvatar(
+            radius: isTablet ? 16 : 14,
+            backgroundColor: Colors.red.shade50,
+            child: Icon(
+              isAlreadyAdded ? Icons.check : Icons.add,
+              size: isTablet ? 16 : 14,
+              color:
+                  isAlreadyAdded ? Colors.green.shade600 : Colors.red.shade600,
+            ),
+          ),
+          title: Text(
+            product.name,
+            style: TextStyle(
+              fontSize: isTablet ? 14 : 12,
+              fontWeight: FontWeight.w600,
+              color: Colors.grey.shade900,
+            ),
+          ),
+          subtitle: FutureBuilder<double>(
+            future: _calculateCurrentStock(
+              ref.read(isarServiceProvider).isar,
+              ref.read(currentCompanyProvider)?.id ?? 0,
+              product.id,
+            ),
+            builder: (context, snap) {
+              final stock = snap.data ?? product.openingQty;
+              final stockColor = stock <= 0
+                  ? Colors.red.shade600
+                  : stock < 5
+                      ? Colors.orange.shade700
+                      : Colors.green.shade700;
+              return Text(
+                'Stock: ${stock.toStringAsFixed(1)} • Rate: $_currencySymbol ${product.salePrice.toStringAsFixed(2)}',
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  fontSize: isTablet ? 11 : 10,
+                  fontWeight: FontWeight.w500,
+                  color: stockColor,
+                ),
+              );
+            },
+          ),
+        );
+      },
     );
   }
 
@@ -2280,7 +2209,7 @@ class _SalesInvoiceFormScreenState
               textInputAction: TextInputAction.done,
               style: TextStyle(fontSize: isTablet ? 16 : 14),
               decoration: InputDecoration(
-                prefixText: 'RS ',
+                prefixText: '$_currencySymbol ',
                 prefixStyle: TextStyle(
                   fontSize: isTablet ? 16 : 14,
                   color: Colors.grey.shade700,
@@ -2481,7 +2410,7 @@ class _SalesInvoiceFormScreenState
       final success = await whatsappService.shareInvoice(
         invoiceNumber: transaction.referenceNo,
         amount: invoice.grandTotal,
-        currency: 'Rs',
+        currency: _currencySymbol,
         customerName: customer.name,
         customerPhone: customerPhone,
         invoiceType: 'Sales Invoice',
@@ -2700,7 +2629,7 @@ class _SalesInvoiceFormScreenState
           // Update existing cash payment with current paid amount
           paymentDetails[i]['amount'] = _paidAmount;
           foundCashPayment = true;
-          print('Updated existing cash payment to: $_paidAmount');
+          print('Updated existing cash receipt to: $_paidAmount');
           break;
         }
       }
@@ -2711,7 +2640,7 @@ class _SalesInvoiceFormScreenState
           'accountName': 'Cash',
           'amount': _paidAmount,
         });
-        print('Added new cash payment: $_paidAmount');
+        print('Added new cash receipt: $_paidAmount');
       }
     }
 
@@ -3096,7 +3025,7 @@ class _SalesInvoiceFormScreenState
             ),
           ),
           Text(
-            'Rs ${amount.toStringAsFixed(0)}',
+            '$_currencySymbol ${amount.toStringAsFixed(0)}',
             style: TextStyle(
               fontSize: fontSize ?? (isTablet ? 14 : 12),
               fontWeight: isBold ? FontWeight.w700 : FontWeight.w600,

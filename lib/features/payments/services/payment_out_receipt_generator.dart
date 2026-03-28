@@ -18,6 +18,20 @@ class PaymentOutReceiptGenerator {
   static final _dateFormat = DateFormat('dd MMM, yyyy');
   static final _currencyFormat = NumberFormat('#,##,##0.00');
 
+  static String _currencySymbol(Company company) {
+    const symbols = {
+      'PKR': '₨',
+      'USD': r'$',
+      'EUR': '€',
+      'GBP': '£',
+      'INR': '₹',
+      'SAR': 'ر.س',
+      'AED': 'د.إ',
+    };
+    final currency = company.primaryCurrency ?? 'PKR';
+    return symbols[currency] ?? currency;
+  }
+
   // Generate receipt as image
   static Future<Uint8List> generateReceiptImage({
     required Company company,
@@ -27,6 +41,7 @@ class PaymentOutReceiptGenerator {
     required double totalAmount,
     String? imagePath,
   }) async {
+    final currencySymbol = _currencySymbol(company);
     final recorder = ui.PictureRecorder();
     final canvas = Canvas(recorder);
     const size = Size(800, 1200);
@@ -126,7 +141,7 @@ class PaymentOutReceiptGenerator {
       );
       _drawText(
         canvas,
-        'Rs ${_currencyFormat.format(line.amount)}',
+        '$currencySymbol ${_currencyFormat.format(line.amount)}',
         Offset(600, currentY),
         const TextStyle(fontSize: 14, color: Colors.black87),
       );
@@ -140,7 +155,7 @@ class PaymentOutReceiptGenerator {
       ..style = PaintingStyle.fill;
     canvas.drawRRect(
       RRect.fromRectAndRadius(
-        Rect.fromLTWH(40, currentY, 720, 120),
+        Rect.fromLTWH(40, currentY, 720, 170),
         const Radius.circular(12),
       ),
       boxPaint,
@@ -152,7 +167,7 @@ class PaymentOutReceiptGenerator {
       ..strokeWidth = 1;
     canvas.drawRRect(
       RRect.fromRectAndRadius(
-        Rect.fromLTWH(40, currentY, 720, 120),
+        Rect.fromLTWH(40, currentY, 720, 170),
         const Radius.circular(12),
       ),
       borderPaint,
@@ -161,17 +176,53 @@ class PaymentOutReceiptGenerator {
     currentY += 15;
     _drawText(
       canvas,
-      'Total Paid Amount',
+      'Opening Balance',
+      Offset(60, currentY),
+      TextStyle(fontSize: 16, color: Colors.grey.shade700),
+    );
+    _drawText(
+      canvas,
+      '$currencySymbol ${_currencyFormat.format(payment.previousBalance)}',
+      Offset(600, currentY),
+      const TextStyle(fontSize: 16, color: Colors.black87),
+    );
+
+    currentY += 35;
+    _drawText(
+      canvas,
+      'Paid Amount',
       Offset(60, currentY),
       const TextStyle(
           fontSize: 18, fontWeight: FontWeight.bold, color: Colors.red),
     );
     _drawText(
       canvas,
-      'Rs ${_currencyFormat.format(totalAmount)}',
+      '$currencySymbol ${_currencyFormat.format(totalAmount)}',
       Offset(600, currentY),
       const TextStyle(
           fontSize: 18, fontWeight: FontWeight.bold, color: Colors.red),
+    );
+
+    final closingBalanceColor =
+        payment.remainingBalance > 0 ? Colors.red : Colors.green;
+    currentY += 35;
+    _drawText(
+      canvas,
+      'Closing Balance',
+      Offset(60, currentY),
+      TextStyle(
+          fontSize: 18,
+          fontWeight: FontWeight.bold,
+          color: closingBalanceColor),
+    );
+    _drawText(
+      canvas,
+      '$currencySymbol ${_currencyFormat.format(payment.remainingBalance)}',
+      Offset(600, currentY),
+      TextStyle(
+          fontSize: 18,
+          fontWeight: FontWeight.bold,
+          color: closingBalanceColor),
     );
 
     // Add image if provided
@@ -216,6 +267,7 @@ class PaymentOutReceiptGenerator {
     required double totalAmount,
     String? imagePath,
   }) async {
+    final currencySymbol = _currencySymbol(company);
     final pdf = pw.Document();
     final isar = Isar.getInstance();
 
@@ -384,7 +436,7 @@ class PaymentOutReceiptGenerator {
                         pw.Padding(
                           padding: const pw.EdgeInsets.all(8),
                           child: pw.Text(
-                            'Rs ${_currencyFormat.format(entry.value)}',
+                            '$currencySymbol ${_currencyFormat.format(entry.value)}',
                             textAlign: pw.TextAlign.right,
                           ),
                         ),
@@ -404,19 +456,58 @@ class PaymentOutReceiptGenerator {
                       const pw.BorderRadius.all(pw.Radius.circular(8)),
                   border: pw.Border.all(color: PdfColors.red),
                 ),
-                child: pw.Row(
-                  mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
+                child: pw.Column(
                   children: [
-                    pw.Text(
-                      'Total Paid Amount',
-                      style: pw.TextStyle(
-                          fontSize: 16, fontWeight: pw.FontWeight.bold),
+                    pw.Row(
+                      mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
+                      children: [
+                        pw.Text('Opening Balance',
+                            style: const pw.TextStyle(fontSize: 14)),
+                        pw.Text(
+                            '$currencySymbol ${_currencyFormat.format(payment.previousBalance)}',
+                            style: const pw.TextStyle(fontSize: 14)),
+                      ],
                     ),
-                    pw.Text('Rs ${_currencyFormat.format(totalAmount)}',
-                        style: pw.TextStyle(
-                            fontSize: 16,
-                            fontWeight: pw.FontWeight.bold,
-                            color: PdfColors.red)),
+                    pw.SizedBox(height: 12),
+                    pw.Row(
+                      mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
+                      children: [
+                        pw.Text(
+                          'Paid Amount',
+                          style: pw.TextStyle(
+                              fontSize: 16, fontWeight: pw.FontWeight.bold),
+                        ),
+                        pw.Text(
+                            '$currencySymbol ${_currencyFormat.format(totalAmount)}',
+                            style: pw.TextStyle(
+                                fontSize: 16,
+                                fontWeight: pw.FontWeight.bold,
+                                color: PdfColors.red)),
+                      ],
+                    ),
+                    pw.SizedBox(height: 12),
+                    pw.Divider(),
+                    pw.SizedBox(height: 8),
+                    pw.Row(
+                      mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
+                      children: [
+                        pw.Text('Closing Balance',
+                            style: pw.TextStyle(
+                                fontSize: 16,
+                                fontWeight: pw.FontWeight.bold,
+                                color: payment.remainingBalance > 0
+                                    ? PdfColors.red
+                                    : PdfColors.green)),
+                        pw.Text(
+                            '$currencySymbol ${_currencyFormat.format(payment.remainingBalance)}',
+                            style: pw.TextStyle(
+                                fontSize: 16,
+                                fontWeight: pw.FontWeight.bold,
+                                color: payment.remainingBalance > 0
+                                    ? PdfColors.red
+                                    : PdfColors.green)),
+                      ],
+                    ),
                   ],
                 ),
               ),

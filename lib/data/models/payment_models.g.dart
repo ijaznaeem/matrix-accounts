@@ -2151,23 +2151,33 @@ const PaymentInSchema = CollectionSchema(
       name: r'partyId',
       type: IsarType.long,
     ),
-    r'receiptDate': PropertySchema(
+    r'previousBalance': PropertySchema(
       id: 6,
+      name: r'previousBalance',
+      type: IsarType.double,
+    ),
+    r'receiptDate': PropertySchema(
+      id: 7,
       name: r'receiptDate',
       type: IsarType.dateTime,
     ),
     r'receiptNo': PropertySchema(
-      id: 7,
+      id: 8,
       name: r'receiptNo',
       type: IsarType.string,
     ),
+    r'remainingBalance': PropertySchema(
+      id: 9,
+      name: r'remainingBalance',
+      type: IsarType.double,
+    ),
     r'totalAmount': PropertySchema(
-      id: 8,
+      id: 10,
       name: r'totalAmount',
       type: IsarType.double,
     ),
     r'updatedAt': PropertySchema(
-      id: 9,
+      id: 11,
       name: r'updatedAt',
       type: IsarType.dateTime,
     )
@@ -2247,10 +2257,12 @@ void _paymentInSerialize(
   writer.writeLong(offsets[3], object.createdByUserId);
   writer.writeString(offsets[4], object.description);
   writer.writeLong(offsets[5], object.partyId);
-  writer.writeDateTime(offsets[6], object.receiptDate);
-  writer.writeString(offsets[7], object.receiptNo);
-  writer.writeDouble(offsets[8], object.totalAmount);
-  writer.writeDateTime(offsets[9], object.updatedAt);
+  writer.writeDouble(offsets[6], object.previousBalance);
+  writer.writeDateTime(offsets[7], object.receiptDate);
+  writer.writeString(offsets[8], object.receiptNo);
+  writer.writeDouble(offsets[9], object.remainingBalance);
+  writer.writeDouble(offsets[10], object.totalAmount);
+  writer.writeDateTime(offsets[11], object.updatedAt);
 }
 
 PaymentIn _paymentInDeserialize(
@@ -2267,10 +2279,12 @@ PaymentIn _paymentInDeserialize(
   object.description = reader.readStringOrNull(offsets[4]);
   object.id = id;
   object.partyId = reader.readLong(offsets[5]);
-  object.receiptDate = reader.readDateTime(offsets[6]);
-  object.receiptNo = reader.readString(offsets[7]);
-  object.totalAmount = reader.readDouble(offsets[8]);
-  object.updatedAt = reader.readDateTimeOrNull(offsets[9]);
+  object.previousBalance = reader.readDouble(offsets[6]);
+  object.receiptDate = reader.readDateTime(offsets[7]);
+  object.receiptNo = reader.readString(offsets[8]);
+  object.remainingBalance = reader.readDouble(offsets[9]);
+  object.totalAmount = reader.readDouble(offsets[10]);
+  object.updatedAt = reader.readDateTimeOrNull(offsets[11]);
   return object;
 }
 
@@ -2294,12 +2308,16 @@ P _paymentInDeserializeProp<P>(
     case 5:
       return (reader.readLong(offset)) as P;
     case 6:
-      return (reader.readDateTime(offset)) as P;
-    case 7:
-      return (reader.readString(offset)) as P;
-    case 8:
       return (reader.readDouble(offset)) as P;
+    case 7:
+      return (reader.readDateTime(offset)) as P;
+    case 8:
+      return (reader.readString(offset)) as P;
     case 9:
+      return (reader.readDouble(offset)) as P;
+    case 10:
+      return (reader.readDouble(offset)) as P;
+    case 11:
       return (reader.readDateTimeOrNull(offset)) as P;
     default:
       throw IsarError('Unknown property with id $propertyId');
@@ -3187,6 +3205,72 @@ extension PaymentInQueryFilter
     });
   }
 
+  QueryBuilder<PaymentIn, PaymentIn, QAfterFilterCondition>
+      previousBalanceEqualTo(
+    double value, {
+    double epsilon = Query.epsilon,
+  }) {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(FilterCondition.equalTo(
+        property: r'previousBalance',
+        value: value,
+        epsilon: epsilon,
+      ));
+    });
+  }
+
+  QueryBuilder<PaymentIn, PaymentIn, QAfterFilterCondition>
+      previousBalanceGreaterThan(
+    double value, {
+    bool include = false,
+    double epsilon = Query.epsilon,
+  }) {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(FilterCondition.greaterThan(
+        include: include,
+        property: r'previousBalance',
+        value: value,
+        epsilon: epsilon,
+      ));
+    });
+  }
+
+  QueryBuilder<PaymentIn, PaymentIn, QAfterFilterCondition>
+      previousBalanceLessThan(
+    double value, {
+    bool include = false,
+    double epsilon = Query.epsilon,
+  }) {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(FilterCondition.lessThan(
+        include: include,
+        property: r'previousBalance',
+        value: value,
+        epsilon: epsilon,
+      ));
+    });
+  }
+
+  QueryBuilder<PaymentIn, PaymentIn, QAfterFilterCondition>
+      previousBalanceBetween(
+    double lower,
+    double upper, {
+    bool includeLower = true,
+    bool includeUpper = true,
+    double epsilon = Query.epsilon,
+  }) {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(FilterCondition.between(
+        property: r'previousBalance',
+        lower: lower,
+        includeLower: includeLower,
+        upper: upper,
+        includeUpper: includeUpper,
+        epsilon: epsilon,
+      ));
+    });
+  }
+
   QueryBuilder<PaymentIn, PaymentIn, QAfterFilterCondition> receiptDateEqualTo(
       DateTime value) {
     return QueryBuilder.apply(this, (query) {
@@ -3369,6 +3453,72 @@ extension PaymentInQueryFilter
       return query.addFilterCondition(FilterCondition.greaterThan(
         property: r'receiptNo',
         value: '',
+      ));
+    });
+  }
+
+  QueryBuilder<PaymentIn, PaymentIn, QAfterFilterCondition>
+      remainingBalanceEqualTo(
+    double value, {
+    double epsilon = Query.epsilon,
+  }) {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(FilterCondition.equalTo(
+        property: r'remainingBalance',
+        value: value,
+        epsilon: epsilon,
+      ));
+    });
+  }
+
+  QueryBuilder<PaymentIn, PaymentIn, QAfterFilterCondition>
+      remainingBalanceGreaterThan(
+    double value, {
+    bool include = false,
+    double epsilon = Query.epsilon,
+  }) {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(FilterCondition.greaterThan(
+        include: include,
+        property: r'remainingBalance',
+        value: value,
+        epsilon: epsilon,
+      ));
+    });
+  }
+
+  QueryBuilder<PaymentIn, PaymentIn, QAfterFilterCondition>
+      remainingBalanceLessThan(
+    double value, {
+    bool include = false,
+    double epsilon = Query.epsilon,
+  }) {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(FilterCondition.lessThan(
+        include: include,
+        property: r'remainingBalance',
+        value: value,
+        epsilon: epsilon,
+      ));
+    });
+  }
+
+  QueryBuilder<PaymentIn, PaymentIn, QAfterFilterCondition>
+      remainingBalanceBetween(
+    double lower,
+    double upper, {
+    bool includeLower = true,
+    bool includeUpper = true,
+    double epsilon = Query.epsilon,
+  }) {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(FilterCondition.between(
+        property: r'remainingBalance',
+        lower: lower,
+        includeLower: includeLower,
+        upper: upper,
+        includeUpper: includeUpper,
+        epsilon: epsilon,
       ));
     });
   }
@@ -3587,6 +3737,18 @@ extension PaymentInQuerySortBy on QueryBuilder<PaymentIn, PaymentIn, QSortBy> {
     });
   }
 
+  QueryBuilder<PaymentIn, PaymentIn, QAfterSortBy> sortByPreviousBalance() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addSortBy(r'previousBalance', Sort.asc);
+    });
+  }
+
+  QueryBuilder<PaymentIn, PaymentIn, QAfterSortBy> sortByPreviousBalanceDesc() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addSortBy(r'previousBalance', Sort.desc);
+    });
+  }
+
   QueryBuilder<PaymentIn, PaymentIn, QAfterSortBy> sortByReceiptDate() {
     return QueryBuilder.apply(this, (query) {
       return query.addSortBy(r'receiptDate', Sort.asc);
@@ -3608,6 +3770,19 @@ extension PaymentInQuerySortBy on QueryBuilder<PaymentIn, PaymentIn, QSortBy> {
   QueryBuilder<PaymentIn, PaymentIn, QAfterSortBy> sortByReceiptNoDesc() {
     return QueryBuilder.apply(this, (query) {
       return query.addSortBy(r'receiptNo', Sort.desc);
+    });
+  }
+
+  QueryBuilder<PaymentIn, PaymentIn, QAfterSortBy> sortByRemainingBalance() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addSortBy(r'remainingBalance', Sort.asc);
+    });
+  }
+
+  QueryBuilder<PaymentIn, PaymentIn, QAfterSortBy>
+      sortByRemainingBalanceDesc() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addSortBy(r'remainingBalance', Sort.desc);
     });
   }
 
@@ -3722,6 +3897,18 @@ extension PaymentInQuerySortThenBy
     });
   }
 
+  QueryBuilder<PaymentIn, PaymentIn, QAfterSortBy> thenByPreviousBalance() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addSortBy(r'previousBalance', Sort.asc);
+    });
+  }
+
+  QueryBuilder<PaymentIn, PaymentIn, QAfterSortBy> thenByPreviousBalanceDesc() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addSortBy(r'previousBalance', Sort.desc);
+    });
+  }
+
   QueryBuilder<PaymentIn, PaymentIn, QAfterSortBy> thenByReceiptDate() {
     return QueryBuilder.apply(this, (query) {
       return query.addSortBy(r'receiptDate', Sort.asc);
@@ -3743,6 +3930,19 @@ extension PaymentInQuerySortThenBy
   QueryBuilder<PaymentIn, PaymentIn, QAfterSortBy> thenByReceiptNoDesc() {
     return QueryBuilder.apply(this, (query) {
       return query.addSortBy(r'receiptNo', Sort.desc);
+    });
+  }
+
+  QueryBuilder<PaymentIn, PaymentIn, QAfterSortBy> thenByRemainingBalance() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addSortBy(r'remainingBalance', Sort.asc);
+    });
+  }
+
+  QueryBuilder<PaymentIn, PaymentIn, QAfterSortBy>
+      thenByRemainingBalanceDesc() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addSortBy(r'remainingBalance', Sort.desc);
     });
   }
 
@@ -3812,6 +4012,12 @@ extension PaymentInQueryWhereDistinct
     });
   }
 
+  QueryBuilder<PaymentIn, PaymentIn, QDistinct> distinctByPreviousBalance() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addDistinctBy(r'previousBalance');
+    });
+  }
+
   QueryBuilder<PaymentIn, PaymentIn, QDistinct> distinctByReceiptDate() {
     return QueryBuilder.apply(this, (query) {
       return query.addDistinctBy(r'receiptDate');
@@ -3822,6 +4028,12 @@ extension PaymentInQueryWhereDistinct
       {bool caseSensitive = true}) {
     return QueryBuilder.apply(this, (query) {
       return query.addDistinctBy(r'receiptNo', caseSensitive: caseSensitive);
+    });
+  }
+
+  QueryBuilder<PaymentIn, PaymentIn, QDistinct> distinctByRemainingBalance() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addDistinctBy(r'remainingBalance');
     });
   }
 
@@ -3882,6 +4094,12 @@ extension PaymentInQueryProperty
     });
   }
 
+  QueryBuilder<PaymentIn, double, QQueryOperations> previousBalanceProperty() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addPropertyName(r'previousBalance');
+    });
+  }
+
   QueryBuilder<PaymentIn, DateTime, QQueryOperations> receiptDateProperty() {
     return QueryBuilder.apply(this, (query) {
       return query.addPropertyName(r'receiptDate');
@@ -3891,6 +4109,12 @@ extension PaymentInQueryProperty
   QueryBuilder<PaymentIn, String, QQueryOperations> receiptNoProperty() {
     return QueryBuilder.apply(this, (query) {
       return query.addPropertyName(r'receiptNo');
+    });
+  }
+
+  QueryBuilder<PaymentIn, double, QQueryOperations> remainingBalanceProperty() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addPropertyName(r'remainingBalance');
     });
   }
 
@@ -5064,23 +5288,33 @@ const PaymentOutSchema = CollectionSchema(
       name: r'partyId',
       type: IsarType.long,
     ),
-    r'totalAmount': PropertySchema(
+    r'previousBalance': PropertySchema(
       id: 6,
+      name: r'previousBalance',
+      type: IsarType.double,
+    ),
+    r'remainingBalance': PropertySchema(
+      id: 7,
+      name: r'remainingBalance',
+      type: IsarType.double,
+    ),
+    r'totalAmount': PropertySchema(
+      id: 8,
       name: r'totalAmount',
       type: IsarType.double,
     ),
     r'updatedAt': PropertySchema(
-      id: 7,
+      id: 9,
       name: r'updatedAt',
       type: IsarType.dateTime,
     ),
     r'voucherDate': PropertySchema(
-      id: 8,
+      id: 10,
       name: r'voucherDate',
       type: IsarType.dateTime,
     ),
     r'voucherNo': PropertySchema(
-      id: 9,
+      id: 11,
       name: r'voucherNo',
       type: IsarType.string,
     )
@@ -5160,10 +5394,12 @@ void _paymentOutSerialize(
   writer.writeLong(offsets[3], object.createdByUserId);
   writer.writeString(offsets[4], object.description);
   writer.writeLong(offsets[5], object.partyId);
-  writer.writeDouble(offsets[6], object.totalAmount);
-  writer.writeDateTime(offsets[7], object.updatedAt);
-  writer.writeDateTime(offsets[8], object.voucherDate);
-  writer.writeString(offsets[9], object.voucherNo);
+  writer.writeDouble(offsets[6], object.previousBalance);
+  writer.writeDouble(offsets[7], object.remainingBalance);
+  writer.writeDouble(offsets[8], object.totalAmount);
+  writer.writeDateTime(offsets[9], object.updatedAt);
+  writer.writeDateTime(offsets[10], object.voucherDate);
+  writer.writeString(offsets[11], object.voucherNo);
 }
 
 PaymentOut _paymentOutDeserialize(
@@ -5180,10 +5416,12 @@ PaymentOut _paymentOutDeserialize(
   object.description = reader.readStringOrNull(offsets[4]);
   object.id = id;
   object.partyId = reader.readLong(offsets[5]);
-  object.totalAmount = reader.readDouble(offsets[6]);
-  object.updatedAt = reader.readDateTimeOrNull(offsets[7]);
-  object.voucherDate = reader.readDateTime(offsets[8]);
-  object.voucherNo = reader.readString(offsets[9]);
+  object.previousBalance = reader.readDouble(offsets[6]);
+  object.remainingBalance = reader.readDouble(offsets[7]);
+  object.totalAmount = reader.readDouble(offsets[8]);
+  object.updatedAt = reader.readDateTimeOrNull(offsets[9]);
+  object.voucherDate = reader.readDateTime(offsets[10]);
+  object.voucherNo = reader.readString(offsets[11]);
   return object;
 }
 
@@ -5209,10 +5447,14 @@ P _paymentOutDeserializeProp<P>(
     case 6:
       return (reader.readDouble(offset)) as P;
     case 7:
-      return (reader.readDateTimeOrNull(offset)) as P;
+      return (reader.readDouble(offset)) as P;
     case 8:
-      return (reader.readDateTime(offset)) as P;
+      return (reader.readDouble(offset)) as P;
     case 9:
+      return (reader.readDateTimeOrNull(offset)) as P;
+    case 10:
+      return (reader.readDateTime(offset)) as P;
+    case 11:
       return (reader.readString(offset)) as P;
     default:
       throw IsarError('Unknown property with id $propertyId');
@@ -6104,6 +6346,138 @@ extension PaymentOutQueryFilter
   }
 
   QueryBuilder<PaymentOut, PaymentOut, QAfterFilterCondition>
+      previousBalanceEqualTo(
+    double value, {
+    double epsilon = Query.epsilon,
+  }) {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(FilterCondition.equalTo(
+        property: r'previousBalance',
+        value: value,
+        epsilon: epsilon,
+      ));
+    });
+  }
+
+  QueryBuilder<PaymentOut, PaymentOut, QAfterFilterCondition>
+      previousBalanceGreaterThan(
+    double value, {
+    bool include = false,
+    double epsilon = Query.epsilon,
+  }) {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(FilterCondition.greaterThan(
+        include: include,
+        property: r'previousBalance',
+        value: value,
+        epsilon: epsilon,
+      ));
+    });
+  }
+
+  QueryBuilder<PaymentOut, PaymentOut, QAfterFilterCondition>
+      previousBalanceLessThan(
+    double value, {
+    bool include = false,
+    double epsilon = Query.epsilon,
+  }) {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(FilterCondition.lessThan(
+        include: include,
+        property: r'previousBalance',
+        value: value,
+        epsilon: epsilon,
+      ));
+    });
+  }
+
+  QueryBuilder<PaymentOut, PaymentOut, QAfterFilterCondition>
+      previousBalanceBetween(
+    double lower,
+    double upper, {
+    bool includeLower = true,
+    bool includeUpper = true,
+    double epsilon = Query.epsilon,
+  }) {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(FilterCondition.between(
+        property: r'previousBalance',
+        lower: lower,
+        includeLower: includeLower,
+        upper: upper,
+        includeUpper: includeUpper,
+        epsilon: epsilon,
+      ));
+    });
+  }
+
+  QueryBuilder<PaymentOut, PaymentOut, QAfterFilterCondition>
+      remainingBalanceEqualTo(
+    double value, {
+    double epsilon = Query.epsilon,
+  }) {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(FilterCondition.equalTo(
+        property: r'remainingBalance',
+        value: value,
+        epsilon: epsilon,
+      ));
+    });
+  }
+
+  QueryBuilder<PaymentOut, PaymentOut, QAfterFilterCondition>
+      remainingBalanceGreaterThan(
+    double value, {
+    bool include = false,
+    double epsilon = Query.epsilon,
+  }) {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(FilterCondition.greaterThan(
+        include: include,
+        property: r'remainingBalance',
+        value: value,
+        epsilon: epsilon,
+      ));
+    });
+  }
+
+  QueryBuilder<PaymentOut, PaymentOut, QAfterFilterCondition>
+      remainingBalanceLessThan(
+    double value, {
+    bool include = false,
+    double epsilon = Query.epsilon,
+  }) {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(FilterCondition.lessThan(
+        include: include,
+        property: r'remainingBalance',
+        value: value,
+        epsilon: epsilon,
+      ));
+    });
+  }
+
+  QueryBuilder<PaymentOut, PaymentOut, QAfterFilterCondition>
+      remainingBalanceBetween(
+    double lower,
+    double upper, {
+    bool includeLower = true,
+    bool includeUpper = true,
+    double epsilon = Query.epsilon,
+  }) {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(FilterCondition.between(
+        property: r'remainingBalance',
+        lower: lower,
+        includeLower: includeLower,
+        upper: upper,
+        includeUpper: includeUpper,
+        epsilon: epsilon,
+      ));
+    });
+  }
+
+  QueryBuilder<PaymentOut, PaymentOut, QAfterFilterCondition>
       totalAmountEqualTo(
     double value, {
     double epsilon = Query.epsilon,
@@ -6514,6 +6888,32 @@ extension PaymentOutQuerySortBy
     });
   }
 
+  QueryBuilder<PaymentOut, PaymentOut, QAfterSortBy> sortByPreviousBalance() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addSortBy(r'previousBalance', Sort.asc);
+    });
+  }
+
+  QueryBuilder<PaymentOut, PaymentOut, QAfterSortBy>
+      sortByPreviousBalanceDesc() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addSortBy(r'previousBalance', Sort.desc);
+    });
+  }
+
+  QueryBuilder<PaymentOut, PaymentOut, QAfterSortBy> sortByRemainingBalance() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addSortBy(r'remainingBalance', Sort.asc);
+    });
+  }
+
+  QueryBuilder<PaymentOut, PaymentOut, QAfterSortBy>
+      sortByRemainingBalanceDesc() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addSortBy(r'remainingBalance', Sort.desc);
+    });
+  }
+
   QueryBuilder<PaymentOut, PaymentOut, QAfterSortBy> sortByTotalAmount() {
     return QueryBuilder.apply(this, (query) {
       return query.addSortBy(r'totalAmount', Sort.asc);
@@ -6651,6 +7051,32 @@ extension PaymentOutQuerySortThenBy
     });
   }
 
+  QueryBuilder<PaymentOut, PaymentOut, QAfterSortBy> thenByPreviousBalance() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addSortBy(r'previousBalance', Sort.asc);
+    });
+  }
+
+  QueryBuilder<PaymentOut, PaymentOut, QAfterSortBy>
+      thenByPreviousBalanceDesc() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addSortBy(r'previousBalance', Sort.desc);
+    });
+  }
+
+  QueryBuilder<PaymentOut, PaymentOut, QAfterSortBy> thenByRemainingBalance() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addSortBy(r'remainingBalance', Sort.asc);
+    });
+  }
+
+  QueryBuilder<PaymentOut, PaymentOut, QAfterSortBy>
+      thenByRemainingBalanceDesc() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addSortBy(r'remainingBalance', Sort.desc);
+    });
+  }
+
   QueryBuilder<PaymentOut, PaymentOut, QAfterSortBy> thenByTotalAmount() {
     return QueryBuilder.apply(this, (query) {
       return query.addSortBy(r'totalAmount', Sort.asc);
@@ -6741,6 +7167,18 @@ extension PaymentOutQueryWhereDistinct
     });
   }
 
+  QueryBuilder<PaymentOut, PaymentOut, QDistinct> distinctByPreviousBalance() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addDistinctBy(r'previousBalance');
+    });
+  }
+
+  QueryBuilder<PaymentOut, PaymentOut, QDistinct> distinctByRemainingBalance() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addDistinctBy(r'remainingBalance');
+    });
+  }
+
   QueryBuilder<PaymentOut, PaymentOut, QDistinct> distinctByTotalAmount() {
     return QueryBuilder.apply(this, (query) {
       return query.addDistinctBy(r'totalAmount');
@@ -6808,6 +7246,19 @@ extension PaymentOutQueryProperty
   QueryBuilder<PaymentOut, int, QQueryOperations> partyIdProperty() {
     return QueryBuilder.apply(this, (query) {
       return query.addPropertyName(r'partyId');
+    });
+  }
+
+  QueryBuilder<PaymentOut, double, QQueryOperations> previousBalanceProperty() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addPropertyName(r'previousBalance');
+    });
+  }
+
+  QueryBuilder<PaymentOut, double, QQueryOperations>
+      remainingBalanceProperty() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addPropertyName(r'remainingBalance');
     });
   }
 

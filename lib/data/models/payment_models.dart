@@ -47,6 +47,8 @@ class PaymentIn {
   late int partyId; // customer
 
   late double totalAmount;
+  late double previousBalance;
+  late double remainingBalance;
 
   String? description;
   String? attachmentPath;
@@ -87,6 +89,8 @@ class PaymentOut {
   late int partyId; // supplier
 
   late double totalAmount;
+  late double previousBalance;
+  late double remainingBalance;
 
   String? description;
   String? attachmentPath;

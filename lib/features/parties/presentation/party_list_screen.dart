@@ -5,6 +5,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../core/config/providers.dart';
 import '../../../core/database/dao/party_dao.dart';
+import '../../../core/providers/settings_provider.dart';
 import '../../../core/widgets/navigation_drawer_helper.dart';
 import '../../../data/models/party_model.dart';
 import '../logic/party_provider.dart';
@@ -45,6 +46,10 @@ class _PartyListScreenState extends ConsumerState<PartyListScreen> {
   Widget build(BuildContext context) {
     final partyAsync = ref.watch(partyListProvider);
     final company = ref.watch(currentCompanyProvider);
+    final settings = ref.watch(settingsProvider);
+    final currencySymbol =
+        SettingsConstants.currencySymbols[settings.defaultCurrency] ??
+            settings.defaultCurrency;
 
     return Scaffold(
       appBar: AppBar(
@@ -100,7 +105,7 @@ class _PartyListScreenState extends ConsumerState<PartyListScreen> {
                 if (filteredList.isEmpty)
                   _buildEmptyState()
                 else
-                  _buildPartyList(filteredList),
+                  _buildPartyList(filteredList, currencySymbol),
               ],
             ),
           );
@@ -163,85 +168,59 @@ class _PartyListScreenState extends ConsumerState<PartyListScreen> {
                 ],
               ),
             ),
-          SingleChildScrollView(
-            scrollDirection: Axis.horizontal,
-            child: Row(
-              children: [
-                // // Party Type Filters
-                // _buildFilterChip(
-                //   label: 'Customer',
-                //   isSelected: selectedPartyType == PartyType.customer,
-                //   onTap: () {
-                //     setState(() {
-                //       selectedPartyType =
-                //           selectedPartyType == PartyType.customer
-                //               ? null
-                //               : PartyType.customer;
-                //     });
-                //   },
-                // ),
-                const SizedBox(width: 8),
-                _buildFilterChip(
-                  label: 'Supplier',
-                  isSelected: selectedPartyType == PartyType.supplier,
-                  onTap: () {
+          Row(
+            children: [
+              const Text(
+                'Party Type',
+                style: TextStyle(fontSize: 12, fontWeight: FontWeight.w500),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: DropdownButtonFormField<PartyType?>(
+                  value: selectedPartyType,
+                  isExpanded: true,
+                  decoration: InputDecoration(
+                    isDense: true,
+                    contentPadding: const EdgeInsets.symmetric(
+                        horizontal: 12, vertical: 10),
+                    border: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(10),
+                    ),
+                  ),
+                  hint: const Text('All'),
+                  items: const [
+                    DropdownMenuItem<PartyType?>(
+                      value: null,
+                      child: Text('All'),
+                    ),
+                    DropdownMenuItem<PartyType?>(
+                      value: PartyType.customer,
+                      child: Text('Customer'),
+                    ),
+                    DropdownMenuItem<PartyType?>(
+                      value: PartyType.supplier,
+                      child: Text('Supplier'),
+                    ),
+                    DropdownMenuItem<PartyType?>(
+                      value: PartyType.both,
+                      child: Text('Both'),
+                    ),
+                  ],
+                  onChanged: (value) {
                     setState(() {
-                      selectedPartyType =
-                          selectedPartyType == PartyType.supplier
-                              ? null
-                              : PartyType.supplier;
+                      selectedPartyType = value;
                     });
                   },
                 ),
-                const SizedBox(width: 8),
-                // _buildFilterChip(
-                //   label: 'Both',
-                //   isSelected: selectedPartyType == PartyType.both,
-                //   onTap: () {
-                //     setState(() {
-                //       selectedPartyType = selectedPartyType == PartyType.both
-                //           ? null
-                //           : PartyType.both;
-                //     });
-                //   },
-                // ),
-              ],
-            ),
+              ),
+            ],
           ),
         ],
       ),
     );
   }
 
-  Widget _buildFilterChip({
-    required String label,
-    required bool isSelected,
-    required VoidCallback onTap,
-  }) {
-    return GestureDetector(
-      onTap: onTap,
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-        decoration: BoxDecoration(
-          color: isSelected ? Colors.blue.shade600 : Colors.grey.shade200,
-          borderRadius: BorderRadius.circular(20),
-          border: Border.all(
-            color: isSelected ? Colors.blue.shade600 : Colors.grey.shade300,
-          ),
-        ),
-        child: Text(
-          label,
-          style: TextStyle(
-            fontSize: 13,
-            fontWeight: FontWeight.w500,
-            color: isSelected ? Colors.white : Colors.grey.shade700,
-          ),
-        ),
-      ),
-    );
-  }
-
-  Widget _buildPartyList(List<Party> parties) {
+  Widget _buildPartyList(List<Party> parties, String currencySymbol) {
     return Padding(
       padding: const EdgeInsets.all(12),
       child: ListView.builder(
@@ -252,14 +231,14 @@ class _PartyListScreenState extends ConsumerState<PartyListScreen> {
           final p = parties[i];
           return Padding(
             padding: const EdgeInsets.only(bottom: 8),
-            child: _buildPartyCard(p),
+            child: _buildPartyCard(p, currencySymbol),
           );
         },
       ),
     );
   }
 
-  Widget _buildPartyCard(Party party) {
+  Widget _buildPartyCard(Party party, String currencySymbol) {
     return GestureDetector(
       onTap: () {
         Navigator.push(
@@ -332,7 +311,7 @@ class _PartyListScreenState extends ConsumerState<PartyListScreen> {
                                   ),
                                 )
                               : Text(
-                                  'Rs ${balance.abs().toStringAsFixed(0)}',
+                                  '$currencySymbol ${balance.abs().toStringAsFixed(0)}',
                                   style: TextStyle(
                                     fontSize: 16,
                                     fontWeight: FontWeight.bold,
@@ -415,65 +394,49 @@ class _PartyListScreenState extends ConsumerState<PartyListScreen> {
                             ),
                           ),
                   ),
-                  Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      InkWell(
-                        onTap: () {
-                          Navigator.push(
-                            context,
-                            MaterialPageRoute(
-                              builder: (_) => PartyLedgerScreen(party: party),
-                            ),
-                          );
-                        },
-                        borderRadius: BorderRadius.circular(4),
-                        child: Container(
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 4,
-                            vertical: 2,
+                  PopupMenuButton<String>(
+                    tooltip: 'Party actions',
+                    icon: Icon(
+                      Icons.more_vert,
+                      color: Colors.grey.shade700,
+                    ),
+                    onSelected: (value) {
+                      if (value == 'ledger') {
+                        Navigator.push(
+                          context,
+                          MaterialPageRoute(
+                            builder: (_) => PartyLedgerScreen(party: party),
                           ),
-                          decoration: BoxDecoration(
-                            color: Colors.blue.shade50,
-                            borderRadius: BorderRadius.circular(4),
+                        );
+                        return;
+                      }
+
+                      if (value == 'edit') {
+                        Navigator.push(
+                          context,
+                          MaterialPageRoute(
+                            builder: (_) => PartyFormScreen(party: party),
                           ),
-                          child: Text(
-                            'Ledger',
-                            style: TextStyle(
-                              fontSize: 9,
-                              fontWeight: FontWeight.w600,
-                              color: Colors.blue.shade700,
-                            ),
-                          ),
-                        ),
+                        );
+                        return;
+                      }
+
+                      if (value == 'delete') {
+                        _showDeleteConfirmation(context, party, ref);
+                      }
+                    },
+                    itemBuilder: (context) => const [
+                      PopupMenuItem<String>(
+                        value: 'ledger',
+                        child: Text('View Ledger'),
                       ),
-                      const SizedBox(width: 6),
-                      InkWell(
-                        onTap: () {
-                          Navigator.push(
-                            context,
-                            MaterialPageRoute(
-                                builder: (_) => PartyFormScreen(party: party)),
-                          );
-                        },
-                        borderRadius: BorderRadius.circular(12),
-                        child: Icon(
-                          Icons.edit,
-                          size: 16,
-                          color: Colors.grey.shade600,
-                        ),
+                      PopupMenuItem<String>(
+                        value: 'edit',
+                        child: Text('Edit Party'),
                       ),
-                      const SizedBox(width: 6),
-                      InkWell(
-                        onTap: () {
-                          _showDeleteConfirmation(context, party, ref);
-                        },
-                        borderRadius: BorderRadius.circular(12),
-                        child: Icon(
-                          Icons.delete,
-                          size: 16,
-                          color: Colors.red.shade600,
-                        ),
+                      PopupMenuItem<String>(
+                        value: 'delete',
+                        child: Text('Delete Party'),
                       ),
                     ],
                   ),

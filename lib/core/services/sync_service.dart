@@ -695,7 +695,10 @@ class SyncService {
           ? Map<String, dynamic>.from(decodedData)
           : <String, dynamic>{};
 
-      if (c.table == 'invoices' && c.operation != ChangeOperation.delete) {
+      if ((c.table == 'invoices' ||
+              c.table == 'payment_ins' ||
+              c.table == 'payment_outs') &&
+          c.operation != ChangeOperation.delete) {
         _logSyncDebug(
           'attachment:inspect-change companyId=$companyId uploadCompanyId=$uploadCompanyId syncChangeId=${c.id} op=${c.operation.name} recordId=${c.recordId} hasAttachment=${data['attachment_path'] != null}',
         );
@@ -707,16 +710,34 @@ class SyncService {
               !_isRemotePath(createAttachmentPath.trim())) {
             data.remove('attachment_path');
             _logSyncDebug(
-              'attachment:defer-upload invoiceId=${c.recordId} reason=create-needs-server-id',
+              'attachment:defer-upload table=${c.table} recordId=${c.recordId} reason=create-needs-server-id',
             );
           }
         }
 
-        await _maybeUploadInvoiceAttachment(
-          companyId: uploadCompanyId,
-          recordId: c.recordId,
-          data: data,
-        );
+        switch (c.table) {
+          case 'invoices':
+            await _maybeUploadInvoiceAttachment(
+              companyId: uploadCompanyId,
+              recordId: c.recordId,
+              data: data,
+            );
+            break;
+          case 'payment_ins':
+            await _maybeUploadPaymentInAttachment(
+              companyId: uploadCompanyId,
+              recordId: c.recordId,
+              data: data,
+            );
+            break;
+          case 'payment_outs':
+            await _maybeUploadPaymentOutAttachment(
+              companyId: uploadCompanyId,
+              recordId: c.recordId,
+              data: data,
+            );
+            break;
+        }
       }
 
       localChanges.add({
@@ -785,6 +806,78 @@ class SyncService {
     }
   }
 
+  Future<void> _maybeUploadPaymentInAttachment({
+    required int companyId,
+    required int recordId,
+    required Map<String, dynamic> data,
+  }) async {
+    final rawPath = data['attachment_path']?.toString();
+    if (rawPath == null || rawPath.trim().isEmpty) return;
+
+    final path = rawPath.trim();
+    if (_isRemotePath(path)) return;
+
+    final file = XFile(path);
+    Uint8List bytes;
+    try {
+      bytes = await file.readAsBytes();
+    } catch (_) {
+      return;
+    }
+
+    if (bytes.isEmpty) return;
+
+    final uploadedPath = await _uploadPaymentInAttachment(
+      companyId: companyId,
+      paymentInId: recordId,
+      bytes: bytes,
+      originalPath: path,
+    );
+
+    if (uploadedPath != null && uploadedPath.isNotEmpty) {
+      data['attachment_path'] = uploadedPath;
+      await _updatePaymentInAttachmentPathLocally(recordId, uploadedPath);
+      _logSyncDebug(
+          'attachment:uploaded table=payment_ins recordId=$recordId remote=$uploadedPath');
+    }
+  }
+
+  Future<void> _maybeUploadPaymentOutAttachment({
+    required int companyId,
+    required int recordId,
+    required Map<String, dynamic> data,
+  }) async {
+    final rawPath = data['attachment_path']?.toString();
+    if (rawPath == null || rawPath.trim().isEmpty) return;
+
+    final path = rawPath.trim();
+    if (_isRemotePath(path)) return;
+
+    final file = XFile(path);
+    Uint8List bytes;
+    try {
+      bytes = await file.readAsBytes();
+    } catch (_) {
+      return;
+    }
+
+    if (bytes.isEmpty) return;
+
+    final uploadedPath = await _uploadPaymentOutAttachment(
+      companyId: companyId,
+      paymentOutId: recordId,
+      bytes: bytes,
+      originalPath: path,
+    );
+
+    if (uploadedPath != null && uploadedPath.isNotEmpty) {
+      data['attachment_path'] = uploadedPath;
+      await _updatePaymentOutAttachmentPathLocally(recordId, uploadedPath);
+      _logSyncDebug(
+          'attachment:uploaded table=payment_outs recordId=$recordId remote=$uploadedPath');
+    }
+  }
+
   bool _isRemotePath(String path) {
     final lower = path.toLowerCase();
     return lower.startsWith('http://') || lower.startsWith('https://');
@@ -849,6 +942,102 @@ class SyncService {
     return null;
   }
 
+  Future<String?> _uploadPaymentInAttachment({
+    required int companyId,
+    required int paymentInId,
+    required Uint8List bytes,
+    required String originalPath,
+  }) async {
+    final request = http.MultipartRequest(
+      'POST',
+      Uri.parse('${apiClient.baseUrl}/api/attachments/payment-in/upload'),
+    );
+
+    request.headers.addAll({
+      'Accept': 'application/json',
+      if (apiClient.token != null) 'Authorization': 'Bearer ${apiClient.token}',
+      if (apiClient.deviceId != null) 'X-Device-Id': apiClient.deviceId!,
+    });
+
+    request.fields['company_id'] = companyId.toString();
+    request.fields['payment_in_id'] = paymentInId.toString();
+    final fallbackName = 'payment_in_${paymentInId}_attachment.jpg';
+    final guessedName = Uri.tryParse(originalPath)?.pathSegments.last;
+    final fileName = (guessedName != null && guessedName.isNotEmpty)
+        ? guessedName
+        : fallbackName;
+    request.files
+        .add(http.MultipartFile.fromBytes('file', bytes, filename: fileName));
+
+    try {
+      final streamed = await request.send();
+      final response = await http.Response.fromStream(streamed);
+      if (response.statusCode < 200 || response.statusCode >= 300) {
+        _logSyncDebug(
+            'attachment:upload-failed table=payment_ins status=${response.statusCode} body=${response.body}');
+        return null;
+      }
+
+      final decoded = jsonDecode(response.body);
+      if (decoded is Map<String, dynamic> && decoded['success'] == true) {
+        return decoded['attachment_path']?.toString();
+      }
+    } catch (e) {
+      _logSyncDebug(
+          'attachment:upload-error table=payment_ins id=$paymentInId error=$e');
+    }
+
+    return null;
+  }
+
+  Future<String?> _uploadPaymentOutAttachment({
+    required int companyId,
+    required int paymentOutId,
+    required Uint8List bytes,
+    required String originalPath,
+  }) async {
+    final request = http.MultipartRequest(
+      'POST',
+      Uri.parse('${apiClient.baseUrl}/api/attachments/payment-out/upload'),
+    );
+
+    request.headers.addAll({
+      'Accept': 'application/json',
+      if (apiClient.token != null) 'Authorization': 'Bearer ${apiClient.token}',
+      if (apiClient.deviceId != null) 'X-Device-Id': apiClient.deviceId!,
+    });
+
+    request.fields['company_id'] = companyId.toString();
+    request.fields['payment_out_id'] = paymentOutId.toString();
+    final fallbackName = 'payment_out_${paymentOutId}_attachment.jpg';
+    final guessedName = Uri.tryParse(originalPath)?.pathSegments.last;
+    final fileName = (guessedName != null && guessedName.isNotEmpty)
+        ? guessedName
+        : fallbackName;
+    request.files
+        .add(http.MultipartFile.fromBytes('file', bytes, filename: fileName));
+
+    try {
+      final streamed = await request.send();
+      final response = await http.Response.fromStream(streamed);
+      if (response.statusCode < 200 || response.statusCode >= 300) {
+        _logSyncDebug(
+            'attachment:upload-failed table=payment_outs status=${response.statusCode} body=${response.body}');
+        return null;
+      }
+
+      final decoded = jsonDecode(response.body);
+      if (decoded is Map<String, dynamic> && decoded['success'] == true) {
+        return decoded['attachment_path']?.toString();
+      }
+    } catch (e) {
+      _logSyncDebug(
+          'attachment:upload-error table=payment_outs id=$paymentOutId error=$e');
+    }
+
+    return null;
+  }
+
   Future<void> _updateInvoiceAttachmentPathLocally(
     int invoiceId,
     String remotePath,
@@ -884,6 +1073,66 @@ class SyncService {
       _logSyncDebug(
         'attachment:update-local-done invoiceId=$invoiceId pendingChangesUpdated=${pendingChanges.length} remotePath=$remotePath',
       );
+    });
+  }
+
+  Future<void> _updatePaymentInAttachmentPathLocally(
+    int paymentInId,
+    String remotePath,
+  ) async {
+    await _isar.writeTxn(() async {
+      final paymentIn = await _isar.paymentIns.get(paymentInId);
+      if (paymentIn != null) {
+        paymentIn.attachmentPath = remotePath;
+        await _isar.paymentIns.put(paymentIn);
+      }
+
+      final pendingChanges = await _isar.syncChanges
+          .filter()
+          .tableEqualTo('payment_ins')
+          .recordIdEqualTo(paymentInId)
+          .syncedEqualTo(false)
+          .findAll();
+
+      for (final change in pendingChanges) {
+        final parsed = jsonDecode(change.data);
+        if (parsed is Map) {
+          final map = Map<String, dynamic>.from(parsed);
+          map['attachment_path'] = remotePath;
+          change.data = jsonEncode(map);
+          await _isar.syncChanges.put(change);
+        }
+      }
+    });
+  }
+
+  Future<void> _updatePaymentOutAttachmentPathLocally(
+    int paymentOutId,
+    String remotePath,
+  ) async {
+    await _isar.writeTxn(() async {
+      final paymentOut = await _isar.paymentOuts.get(paymentOutId);
+      if (paymentOut != null) {
+        paymentOut.attachmentPath = remotePath;
+        await _isar.paymentOuts.put(paymentOut);
+      }
+
+      final pendingChanges = await _isar.syncChanges
+          .filter()
+          .tableEqualTo('payment_outs')
+          .recordIdEqualTo(paymentOutId)
+          .syncedEqualTo(false)
+          .findAll();
+
+      for (final change in pendingChanges) {
+        final parsed = jsonDecode(change.data);
+        if (parsed is Map) {
+          final map = Map<String, dynamic>.from(parsed);
+          map['attachment_path'] = remotePath;
+          change.data = jsonEncode(map);
+          await _isar.syncChanges.put(change);
+        }
+      }
     });
   }
 
@@ -1014,7 +1263,10 @@ class SyncService {
         data['id'] = recordId;
       }
 
-      if (table == 'invoices' && operation != 'DELETE') {
+      if ((table == 'invoices' ||
+              table == 'payment_ins' ||
+              table == 'payment_outs') &&
+          operation != 'DELETE') {
         final rawAttachmentPath = data['attachment_path']?.toString();
         if (rawAttachmentPath != null) {
           final attachmentPath = rawAttachmentPath.trim();
@@ -1421,6 +1673,12 @@ class SyncService {
       ..receiptDate = _asDate(d['receipt_date'])
       ..partyId = d['party_id'] as int
       ..totalAmount = _asDouble(d['total_amount'])
+      ..previousBalance = d.containsKey('previous_balance')
+          ? _asDouble(d['previous_balance'])
+          : 0.0
+      ..remainingBalance = d.containsKey('remaining_balance')
+          ? _asDouble(d['remaining_balance'])
+          : 0.0
       ..description = d['description'] as String?
       ..attachmentPath = d['attachment_path'] as String?
       ..createdAt = _asDate(d['created_at'])
@@ -1461,6 +1719,12 @@ class SyncService {
       ..voucherDate = _asDate(d['voucher_date'])
       ..partyId = d['party_id'] as int
       ..totalAmount = _asDouble(d['total_amount'])
+      ..previousBalance = d.containsKey('previous_balance')
+          ? _asDouble(d['previous_balance'])
+          : 0.0
+      ..remainingBalance = d.containsKey('remaining_balance')
+          ? _asDouble(d['remaining_balance'])
+          : 0.0
       ..description = d['description'] as String?
       ..attachmentPath = d['attachment_path'] as String?
       ..createdAt = _asDate(d['created_at'])
@@ -1726,7 +1990,57 @@ class SyncService {
                 ..deviceId = deviceId;
               followUpChanges.add(followUp);
               _logSyncDebug(
-                'attachment:queued-follow-up invoiceId=$mappedId for remote upload',
+                'attachment:queued-follow-up table=invoices recordId=$mappedId for remote upload',
+              );
+            }
+          } else if (c.table == 'payment_ins') {
+            final paymentIn = await _isar.paymentIns.get(mappedId);
+            final attachmentPath = paymentIn?.attachmentPath?.trim();
+            if (paymentIn != null &&
+                attachmentPath != null &&
+                attachmentPath.isNotEmpty &&
+                !_isRemotePath(attachmentPath)) {
+              final followUp = SyncChange()
+                ..companyId = c.companyId
+                ..table = 'payment_ins'
+                ..operation = ChangeOperation.update
+                ..recordId = mappedId
+                ..data = jsonEncode({
+                  'id': mappedId,
+                  'company_id': paymentIn.companyId,
+                  'attachment_path': attachmentPath,
+                })
+                ..createdAt = DateTime.now()
+                ..synced = false
+                ..deviceId = deviceId;
+              followUpChanges.add(followUp);
+              _logSyncDebug(
+                'attachment:queued-follow-up table=payment_ins recordId=$mappedId for remote upload',
+              );
+            }
+          } else if (c.table == 'payment_outs') {
+            final paymentOut = await _isar.paymentOuts.get(mappedId);
+            final attachmentPath = paymentOut?.attachmentPath?.trim();
+            if (paymentOut != null &&
+                attachmentPath != null &&
+                attachmentPath.isNotEmpty &&
+                !_isRemotePath(attachmentPath)) {
+              final followUp = SyncChange()
+                ..companyId = c.companyId
+                ..table = 'payment_outs'
+                ..operation = ChangeOperation.update
+                ..recordId = mappedId
+                ..data = jsonEncode({
+                  'id': mappedId,
+                  'company_id': paymentOut.companyId,
+                  'attachment_path': attachmentPath,
+                })
+                ..createdAt = DateTime.now()
+                ..synced = false
+                ..deviceId = deviceId;
+              followUpChanges.add(followUp);
+              _logSyncDebug(
+                'attachment:queued-follow-up table=payment_outs recordId=$mappedId for remote upload',
               );
             }
           }

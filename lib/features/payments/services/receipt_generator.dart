@@ -4,6 +4,7 @@ import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
+import 'package:isar/isar.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:pdf/pdf.dart';
 import 'package:pdf/widgets.dart' as pw;
@@ -17,14 +18,30 @@ class ReceiptGenerator {
   static final _dateFormat = DateFormat('dd MMM, yyyy');
   static final _currencyFormat = NumberFormat('#,##,##0.00');
 
+  static String _currencySymbol(Company company) {
+    const symbols = {
+      'PKR': '₨',
+      'USD': r'$',
+      'EUR': '€',
+      'GBP': '£',
+      'INR': '₹',
+      'SAR': 'ر.س',
+      'AED': 'د.إ',
+    };
+    final currency = company.primaryCurrency ?? 'PKR';
+    return symbols[currency] ?? currency;
+  }
+
   // Generate receipt as image
   static Future<Uint8List> generateReceiptImage({
     required Company company,
     required Party party,
     required PaymentIn payment,
+    required List<PaymentInLine> lines,
     required double totalAmount,
     String? imagePath,
   }) async {
+    final currencySymbol = _currencySymbol(company);
     final recorder = ui.PictureRecorder();
     final canvas = Canvas(recorder);
     const size = Size(800, 1200);
@@ -97,13 +114,47 @@ class ReceiptGenerator {
       const TextStyle(fontSize: 14, color: Colors.black87),
     );
 
+    // Payment lines
+    double currentY = 330;
+    _drawText(
+      canvas,
+      'Payment Details',
+      Offset(40, currentY),
+      const TextStyle(
+          fontSize: 16, fontWeight: FontWeight.bold, color: Colors.black87),
+    );
+    currentY += 30;
+
+    for (final line in lines) {
+      final isar = Isar.getInstance();
+      final account = isar != null
+          ? await isar.paymentAccounts.get(line.paymentAccountId)
+          : null;
+      final accountName = account?.accountName ?? 'Unknown';
+
+      _drawText(
+        canvas,
+        accountName,
+        Offset(40, currentY),
+        TextStyle(fontSize: 14, color: Colors.grey.shade700),
+      );
+      _drawText(
+        canvas,
+        '$currencySymbol ${_currencyFormat.format(line.amount)}',
+        Offset(600, currentY),
+        const TextStyle(fontSize: 14, color: Colors.black87),
+      );
+      currentY += 24;
+    }
+
     // Amounts box
+    currentY += 16;
     final boxPaint = Paint()
       ..color = Colors.grey.shade200
       ..style = PaintingStyle.fill;
     canvas.drawRRect(
       RRect.fromRectAndRadius(
-        const Rect.fromLTWH(40, 350, 720, 150),
+        Rect.fromLTWH(40, currentY, 720, 200),
         const Radius.circular(12),
       ),
       boxPaint,
@@ -115,46 +166,69 @@ class ReceiptGenerator {
       ..strokeWidth = 1;
     canvas.drawRRect(
       RRect.fromRectAndRadius(
-        const Rect.fromLTWH(40, 350, 720, 150),
+        Rect.fromLTWH(40, currentY, 720, 200),
         const Radius.circular(12),
       ),
       borderPaint,
     );
 
+    final amountsTop = currentY;
+
     _drawText(
       canvas,
       'Amounts',
-      const Offset(60, 370),
+      Offset(60, amountsTop + 20),
       const TextStyle(
           fontSize: 18, fontWeight: FontWeight.bold, color: Colors.black87),
     );
 
     _drawText(
       canvas,
-      'Received Amount',
-      const Offset(60, 420),
+      'Opening Balance',
+      Offset(60, amountsTop + 70),
       TextStyle(fontSize: 16, color: Colors.grey.shade700),
     );
     _drawText(
       canvas,
-      'Rs ${_currencyFormat.format(totalAmount)}',
-      const Offset(600, 420),
+      '$currencySymbol ${_currencyFormat.format(payment.previousBalance)}',
+      Offset(600, amountsTop + 70),
       const TextStyle(fontSize: 16, color: Colors.black87),
     );
 
     _drawText(
       canvas,
-      'Total Amount',
-      const Offset(60, 460),
+      'Received Amount',
+      Offset(60, amountsTop + 110),
       const TextStyle(
           fontSize: 18, fontWeight: FontWeight.w600, color: Color(0xFF2196F3)),
     );
     _drawText(
       canvas,
-      'Rs ${_currencyFormat.format(totalAmount)}',
-      const Offset(600, 460),
+      '$currencySymbol ${_currencyFormat.format(totalAmount)}',
+      Offset(600, amountsTop + 110),
       const TextStyle(
           fontSize: 18, fontWeight: FontWeight.w600, color: Color(0xFF2196F3)),
+    );
+
+    final closingBalanceColor =
+        payment.remainingBalance > 0 ? Colors.red : Colors.green;
+    _drawText(
+      canvas,
+      'Closing Balance',
+      Offset(60, amountsTop + 150),
+      TextStyle(
+          fontSize: 18,
+          fontWeight: FontWeight.w600,
+          color: closingBalanceColor),
+    );
+    _drawText(
+      canvas,
+      '$currencySymbol ${_currencyFormat.format(payment.remainingBalance)}',
+      Offset(600, amountsTop + 150),
+      TextStyle(
+          fontSize: 18,
+          fontWeight: FontWeight.w600,
+          color: closingBalanceColor),
     );
 
     // Add image if provided
@@ -166,7 +240,7 @@ class ReceiptGenerator {
           final image = await decodeImageFromList(bytes);
 
           // Draw image
-          const imageTop = 550.0;
+          final imageTop = amountsTop + 220;
           const imageHeight = 200.0;
           final imageWidth = (image.width / image.height) * imageHeight;
           final imageLeft = (size.width - imageWidth) / 2;
@@ -195,10 +269,22 @@ class ReceiptGenerator {
     required Company company,
     required Party party,
     required PaymentIn payment,
+    required List<PaymentInLine> lines,
     required double totalAmount,
     String? imagePath,
   }) async {
+    final currencySymbol = _currencySymbol(company);
     final pdf = pw.Document();
+    final isar = Isar.getInstance();
+
+    final processedLines = <MapEntry<String, double>>[];
+    for (final line in lines) {
+      final account = isar != null
+          ? await isar.paymentAccounts.get(line.paymentAccountId)
+          : null;
+      final accountName = account?.accountName ?? 'Unknown';
+      processedLines.add(MapEntry(accountName, line.amount));
+    }
 
     pw.ImageProvider? pdfImage;
     if (imagePath != null && imagePath.isNotEmpty) {
@@ -309,6 +395,58 @@ class ReceiptGenerator {
               ),
               pw.SizedBox(height: 40),
 
+              pw.Text(
+                'Payment Details',
+                style:
+                    pw.TextStyle(fontSize: 14, fontWeight: pw.FontWeight.bold),
+              ),
+              pw.SizedBox(height: 12),
+              pw.Table(
+                border: pw.TableBorder.all(),
+                children: [
+                  pw.TableRow(
+                    decoration: const pw.BoxDecoration(
+                      color: PdfColors.grey300,
+                    ),
+                    children: [
+                      pw.Padding(
+                        padding: const pw.EdgeInsets.all(8),
+                        child: pw.Text(
+                          'Payment Type',
+                          style: pw.TextStyle(fontWeight: pw.FontWeight.bold),
+                        ),
+                      ),
+                      pw.Padding(
+                        padding: const pw.EdgeInsets.all(8),
+                        child: pw.Text(
+                          'Amount',
+                          style: pw.TextStyle(fontWeight: pw.FontWeight.bold),
+                          textAlign: pw.TextAlign.right,
+                        ),
+                      ),
+                    ],
+                  ),
+                  ...processedLines.map((entry) {
+                    return pw.TableRow(
+                      children: [
+                        pw.Padding(
+                          padding: const pw.EdgeInsets.all(8),
+                          child: pw.Text(entry.key),
+                        ),
+                        pw.Padding(
+                          padding: const pw.EdgeInsets.all(8),
+                          child: pw.Text(
+                            '$currencySymbol ${_currencyFormat.format(entry.value)}',
+                            textAlign: pw.TextAlign.right,
+                          ),
+                        ),
+                      ],
+                    );
+                  }).toList(),
+                ],
+              ),
+              pw.SizedBox(height: 30),
+
               // Amounts box
               pw.Container(
                 padding: const pw.EdgeInsets.all(20),
@@ -330,9 +468,21 @@ class ReceiptGenerator {
                     pw.Row(
                       mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
                       children: [
+                        pw.Text('Opening Balance',
+                            style: const pw.TextStyle(fontSize: 14)),
+                        pw.Text(
+                            '$currencySymbol ${_currencyFormat.format(payment.previousBalance)}',
+                            style: const pw.TextStyle(fontSize: 14)),
+                      ],
+                    ),
+                    pw.SizedBox(height: 12),
+                    pw.Row(
+                      mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
+                      children: [
                         pw.Text('Received Amount',
                             style: const pw.TextStyle(fontSize: 14)),
-                        pw.Text('Rs ${_currencyFormat.format(totalAmount)}',
+                        pw.Text(
+                            '$currencySymbol ${_currencyFormat.format(totalAmount)}',
                             style: const pw.TextStyle(fontSize: 14)),
                       ],
                     ),
@@ -342,16 +492,21 @@ class ReceiptGenerator {
                     pw.Row(
                       mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
                       children: [
-                        pw.Text('Total Amount',
+                        pw.Text('Closing Balance',
                             style: pw.TextStyle(
                                 fontSize: 16,
                                 fontWeight: pw.FontWeight.bold,
-                                color: PdfColors.blue)),
-                        pw.Text('Rs ${_currencyFormat.format(totalAmount)}',
+                                color: payment.remainingBalance > 0
+                                    ? PdfColors.red
+                                    : PdfColors.green)),
+                        pw.Text(
+                            '$currencySymbol ${_currencyFormat.format(payment.remainingBalance)}',
                             style: pw.TextStyle(
                                 fontSize: 16,
                                 fontWeight: pw.FontWeight.bold,
-                                color: PdfColors.blue)),
+                                color: payment.remainingBalance > 0
+                                    ? PdfColors.red
+                                    : PdfColors.green)),
                       ],
                     ),
                   ],
@@ -381,6 +536,7 @@ class ReceiptGenerator {
     required Company company,
     required Party party,
     required PaymentIn payment,
+    required List<PaymentInLine> lines,
     required double totalAmount,
     String? imagePath,
   }) async {
@@ -406,7 +562,7 @@ class ReceiptGenerator {
                 onTap: () async {
                   Navigator.pop(context);
                   await _shareAsImage(
-                      company, party, payment, totalAmount, imagePath);
+                      company, party, payment, lines, totalAmount, imagePath);
                 },
               ),
               ListTile(
@@ -415,7 +571,7 @@ class ReceiptGenerator {
                 onTap: () async {
                   Navigator.pop(context);
                   await _shareAsPdf(
-                      company, party, payment, totalAmount, imagePath);
+                      company, party, payment, lines, totalAmount, imagePath);
                 },
               ),
             ],
@@ -429,6 +585,7 @@ class ReceiptGenerator {
     Company company,
     Party party,
     PaymentIn payment,
+    List<PaymentInLine> lines,
     double totalAmount,
     String? imagePath,
   ) async {
@@ -437,6 +594,7 @@ class ReceiptGenerator {
         company: company,
         party: party,
         payment: payment,
+        lines: lines,
         totalAmount: totalAmount,
         imagePath: imagePath,
       );
@@ -458,6 +616,7 @@ class ReceiptGenerator {
     Company company,
     Party party,
     PaymentIn payment,
+    List<PaymentInLine> lines,
     double totalAmount,
     String? imagePath,
   ) async {
@@ -466,6 +625,7 @@ class ReceiptGenerator {
         company: company,
         party: party,
         payment: payment,
+        lines: lines,
         totalAmount: totalAmount,
         imagePath: imagePath,
       );

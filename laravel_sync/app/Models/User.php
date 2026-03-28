@@ -3,11 +3,11 @@
 namespace App\Models;
 
 use Illuminate\Database\Eloquent\Factories\HasFactory;
-use Illuminate\Database\Eloquent\Model;
 use Illuminate\Foundation\Auth\User as Authenticatable;
 use Illuminate\Notifications\Notifiable;
 use Laravel\Sanctum\HasApiTokens;
 use Illuminate\Database\Eloquent\SoftDeletes;
+use Illuminate\Database\Eloquent\Relations\HasMany;
 
 class User extends Authenticatable
 {
@@ -19,6 +19,7 @@ class User extends Authenticatable
         'role',
         'subscriber_id',
         'max_companies',
+        'subscription_expires_at',
         'password',
         'is_active',
     ];
@@ -32,6 +33,7 @@ class User extends Authenticatable
         'role' => 'string',
         'subscriber_id' => 'integer',
         'max_companies' => 'integer',
+        'subscription_expires_at' => 'datetime',
         'is_active' => 'boolean',
         'email_verified_at' => 'datetime',
         'password' => 'hashed',
@@ -45,6 +47,16 @@ class User extends Authenticatable
     public function tenantUsers()
     {
         return $this->hasMany(User::class, 'subscriber_id');
+    }
+
+    public function clientBillingRecords(): HasMany
+    {
+        return $this->hasMany(ClientBillingRecord::class, 'client_admin_id');
+    }
+
+    public function createdBillingRecords(): HasMany
+    {
+        return $this->hasMany(ClientBillingRecord::class, 'created_by_user_id');
     }
 
     public function companies()

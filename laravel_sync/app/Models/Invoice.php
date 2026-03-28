@@ -5,6 +5,7 @@ namespace App\Models;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\SoftDeletes;
+use Illuminate\Support\Facades\Auth;
 
 class Invoice extends Model
 {
@@ -48,7 +49,7 @@ class Invoice extends Model
         static::created(function ($invoice) {
             app(\App\Services\SyncService::class)->recordChange(
                 $invoice->company_id,
-                auth()->id(),
+                Auth::id(),
                 request()->header('X-Device-Id'),
                 'invoices',
                 $invoice->id,
@@ -60,7 +61,7 @@ class Invoice extends Model
         static::updated(function ($invoice) {
             app(\App\Services\SyncService::class)->recordChange(
                 $invoice->company_id,
-                auth()->id(),
+                Auth::id(),
                 request()->header('X-Device-Id'),
                 'invoices',
                 $invoice->id,
@@ -72,7 +73,7 @@ class Invoice extends Model
         static::deleted(function ($invoice) {
             app(\App\Services\SyncService::class)->recordChange(
                 $invoice->company_id,
-                auth()->id(),
+                Auth::id(),
                 request()->header('X-Device-Id'),
                 'invoices',
                 $invoice->id,

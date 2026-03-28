@@ -8,6 +8,7 @@ import 'package:pdf/widgets.dart' as pw;
 import 'package:printing/printing.dart';
 
 import '../../../core/config/providers.dart';
+import '../../../core/providers/settings_provider.dart';
 import '../../../core/widgets/navigation_drawer_helper.dart';
 import '../../../data/models/invoice_stock_models.dart';
 import '../../../data/models/party_model.dart';
@@ -27,10 +28,16 @@ class _PurchaseInvoiceListScreenState
     extends ConsumerState<PurchaseInvoiceListScreen> {
   final _searchController = TextEditingController();
   String _searchQuery = '';
-  final _currencyFormat = NumberFormat.currency(symbol: 'PKR ');
+  late NumberFormat _currencyFormat;
   final _dateFormat = DateFormat('dd MMM yyyy');
   final _cardMargin = const EdgeInsets.symmetric(vertical: 8);
   final _cardBorderRadius = 12.0;
+
+  String get _currencySymbol {
+    final settings = ref.read(settingsProvider);
+    return SettingsConstants.currencySymbols[settings.defaultCurrency] ??
+        settings.defaultCurrency;
+  }
 
   // Cache the futures to prevent rebuilding
   Future<List<Invoice>>? _invoicesFuture;
@@ -39,6 +46,7 @@ class _PurchaseInvoiceListScreenState
   @override
   void initState() {
     super.initState();
+    _currencyFormat = NumberFormat.currency(symbol: 'PKR ');
     _initializeFutures();
   }
 
@@ -144,6 +152,8 @@ class _PurchaseInvoiceListScreenState
     final theme = Theme.of(context);
     final colorScheme = theme.colorScheme;
     final company = ref.watch(currentCompanyProvider);
+    ref.watch(settingsProvider);
+    _currencyFormat = NumberFormat.currency(symbol: '$_currencySymbol ');
 
     if (company == null) {
       return Scaffold(
@@ -234,7 +244,7 @@ class _PurchaseInvoiceListScreenState
                                 ),
                                 const SizedBox(height: 4),
                                 Text(
-                                  'Rs ${NumberFormat('#,##0.0').format(totalAmount)}',
+                                  '$_currencySymbol ${NumberFormat('#,##0.0').format(totalAmount)}',
                                   style: theme.textTheme.titleMedium?.copyWith(
                                     color: colorScheme.onPrimaryContainer,
                                     fontWeight: FontWeight.bold,
@@ -310,7 +320,8 @@ class _PurchaseInvoiceListScreenState
                   );
                 }
 
-                final invoices = snapshot.data ?? [];
+                final invoices = [...(snapshot.data ?? <Invoice>[])]
+                  ..sort((a, b) => b.invoiceDate.compareTo(a.invoiceDate));
 
                 if (invoices.isEmpty) {
                   return Center(
@@ -533,7 +544,7 @@ class _PurchaseInvoiceListScreenState
                                   crossAxisAlignment: CrossAxisAlignment.center,
                                   children: [
                                     Text(
-                                      'Rs ${NumberFormat('#,##0').format(invoice.grandTotal)}',
+                                      '$_currencySymbol ${NumberFormat('#,##0').format(invoice.grandTotal)}',
                                       style: TextStyle(
                                         fontSize: 13,
                                         fontWeight: FontWeight.bold,

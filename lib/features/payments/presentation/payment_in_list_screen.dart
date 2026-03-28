@@ -11,13 +11,18 @@ import 'package:isar/isar.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:pdf/pdf.dart';
 import 'package:pdf/widgets.dart' as pw;
+import 'package:printing/printing.dart';
 import 'package:share_plus/share_plus.dart';
 
 import '../../../core/config/providers.dart';
+import '../../../core/providers/settings_provider.dart';
 import '../../../data/models/company_model.dart' show Company;
 import '../../../data/models/party_model.dart';
 import '../../../data/models/payment_models.dart';
+import '../../../presentation/widgets/searchable_list.dart';
+import '../../parties/logic/party_provider.dart';
 import '../logic/payment_providers.dart';
+import '../services/receipt_generator.dart';
 
 class PaymentInListScreen extends ConsumerStatefulWidget {
   const PaymentInListScreen({super.key});
@@ -33,6 +38,12 @@ class _PaymentInListScreenState extends ConsumerState<PaymentInListScreen> {
   late DateTime _startDate;
   late DateTime _endDate;
 
+  String get _currencySymbol {
+    final settings = ref.read(settingsProvider);
+    return SettingsConstants.currencySymbols[settings.defaultCurrency] ??
+        settings.defaultCurrency;
+  }
+
   @override
   void initState() {
     super.initState();
@@ -47,6 +58,7 @@ class _PaymentInListScreenState extends ConsumerState<PaymentInListScreen> {
   Widget build(BuildContext context) {
     final company = ref.watch(currentCompanyProvider);
     final paymentsAsync = ref.watch(paymentInsProvider);
+    final partiesAsync = ref.watch(partyListProvider);
 
     return Scaffold(
       appBar: AppBar(
@@ -84,37 +96,73 @@ class _PaymentInListScreenState extends ConsumerState<PaymentInListScreen> {
                 Row(
                   children: [
                     Expanded(
-                      child: GestureDetector(
-                        onTap: () => _showCustomerPicker(),
-                        child: Container(
+                      child: partiesAsync.when(
+                        loading: () => Container(
+                          height: 48,
+                          decoration: BoxDecoration(
+                            color: Colors.white,
+                            borderRadius: BorderRadius.circular(6),
+                            border: Border.all(color: Colors.grey.shade300),
+                          ),
+                          child: const Center(
+                            child: SizedBox(
+                              width: 20,
+                              height: 20,
+                              child: CircularProgressIndicator(strokeWidth: 2),
+                            ),
+                          ),
+                        ),
+                        error: (_, __) => Container(
                           padding: const EdgeInsets.symmetric(
                             horizontal: 12,
-                            vertical: 8,
+                            vertical: 10,
                           ),
                           decoration: BoxDecoration(
                             color: Colors.white,
                             borderRadius: BorderRadius.circular(6),
                             border: Border.all(color: Colors.grey.shade300),
                           ),
-                          child: Row(
-                            children: [
-                              Expanded(
-                                child: Text(
-                                  _selectedCustomer?.name ?? 'All Users',
-                                  style: TextStyle(
-                                    fontSize: 14,
-                                    color: Colors.grey.shade700,
-                                  ),
-                                  overflow: TextOverflow.ellipsis,
-                                ),
-                              ),
-                              Icon(
-                                Icons.arrow_drop_down,
-                                color: Colors.grey.shade600,
-                              ),
-                            ],
+                          child: Text(
+                            _selectedCustomer?.name ?? 'All Customers',
+                            style: TextStyle(
+                              fontSize: 14,
+                              color: Colors.grey.shade700,
+                            ),
+                            overflow: TextOverflow.ellipsis,
                           ),
                         ),
+                        data: (parties) {
+                          final customers = parties
+                              .where(
+                                (party) =>
+                                    party.partyType == PartyType.customer ||
+                                    party.partyType == PartyType.both,
+                              )
+                              .toList();
+
+                          return SearchableDropdown<Party>(
+                            items: customers,
+                            hintText:
+                                _selectedCustomer?.name ?? 'All Customers',
+                            isSelected: _selectedCustomer != null,
+                            onClear: () {
+                              setState(() => _selectedCustomer = null);
+                            },
+                            onSelected: (party) {
+                              setState(() => _selectedCustomer = party);
+                            },
+                            searchMatcher: (party) => party.name,
+                            itemBuilder: (party) => ListTile(
+                              dense: true,
+                              title: Text(
+                                party.name,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                            ),
+                            maxHeight: 280,
+                          );
+                        },
                       ),
                     ),
                   ],
@@ -403,74 +451,6 @@ class _PaymentInListScreenState extends ConsumerState<PaymentInListScreen> {
     );
   }
 
-  Future<void> _showCustomerPicker() async {
-    final isarService = ref.read(isarServiceProvider);
-    final customers = await isarService.isar.partys.where().findAll();
-
-    if (!mounted) return;
-
-    showDialog(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Select Customer'),
-        content: SizedBox(
-          width: double.maxFinite,
-          height: 400,
-          child: Column(
-            children: [
-              ListTile(
-                title: const Text('All Users'),
-                leading: Radio<Party?>(
-                  value: null,
-                  groupValue: _selectedCustomer,
-                  onChanged: (value) {
-                    Navigator.pop(context);
-                    setState(() => _selectedCustomer = null);
-                  },
-                ),
-                onTap: () {
-                  Navigator.pop(context);
-                  setState(() => _selectedCustomer = null);
-                },
-              ),
-              const Divider(),
-              Expanded(
-                child: ListView.builder(
-                  itemCount: customers.length,
-                  itemBuilder: (context, index) {
-                    final customer = customers[index];
-                    return ListTile(
-                      title: Text(customer.name),
-                      subtitle: null,
-                      leading: Radio<Party?>(
-                        value: customer,
-                        groupValue: _selectedCustomer,
-                        onChanged: (value) {
-                          Navigator.pop(context);
-                          setState(() => _selectedCustomer = value);
-                        },
-                      ),
-                      onTap: () {
-                        Navigator.pop(context);
-                        setState(() => _selectedCustomer = customer);
-                      },
-                    );
-                  },
-                ),
-              ),
-            ],
-          ),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('Cancel'),
-          ),
-        ],
-      ),
-    );
-  }
-
   Future<void> _selectDateRange() async {
     final DateTimeRange? picked = await showDateRangePicker(
       context: context,
@@ -614,6 +594,8 @@ class _PaymentInListScreenState extends ConsumerState<PaymentInListScreen> {
     // Calculate totals
     final totalAmount =
         payments.fold<double>(0, (sum, payment) => sum + payment.totalAmount);
+    final totalClosingBalance = payments.fold<double>(
+        0, (sum, payment) => sum + payment.remainingBalance);
 
     // Collect customer names for all payments
     final Map<int, String> customerNames = {};
@@ -639,7 +621,8 @@ class _PaymentInListScreenState extends ConsumerState<PaymentInListScreen> {
             pw.SizedBox(height: 20),
 
             // Summary
-            _buildSummarySection(totalAmount, payments.length, currencyFormat),
+            _buildSummarySection(totalAmount, totalClosingBalance,
+                payments.length, currencyFormat, _currencySymbol),
             pw.SizedBox(height: 20),
 
             // Payment records table
@@ -653,8 +636,8 @@ class _PaymentInListScreenState extends ConsumerState<PaymentInListScreen> {
                 ),
               ),
               pw.SizedBox(height: 10),
-              _buildPaymentTable(
-                  payments, customerNames, dateFormat, currencyFormat),
+              _buildPaymentTable(payments, customerNames, dateFormat,
+                  currencyFormat, _currencySymbol),
             ] else ...[
               pw.Center(
                 child: pw.Text(
@@ -764,8 +747,8 @@ class _PaymentInListScreenState extends ConsumerState<PaymentInListScreen> {
     );
   }
 
-  pw.Widget _buildSummarySection(
-      double totalAmount, int recordCount, NumberFormat currencyFormat) {
+  pw.Widget _buildSummarySection(double totalAmount, double totalClosingBalance,
+      int recordCount, NumberFormat currencyFormat, String currencySymbol) {
     return pw.Container(
       padding: const pw.EdgeInsets.all(16),
       decoration: pw.BoxDecoration(
@@ -814,11 +797,39 @@ class _PaymentInListScreenState extends ConsumerState<PaymentInListScreen> {
               ),
               pw.SizedBox(height: 4),
               pw.Text(
-                'Rs ${currencyFormat.format(totalAmount)}',
+                '$currencySymbol ${currencyFormat.format(totalAmount)}',
                 style: pw.TextStyle(
                   fontSize: 20,
                   fontWeight: pw.FontWeight.bold,
                   color: PdfColors.green700,
+                ),
+              ),
+            ],
+          ),
+          pw.Container(
+            width: 1,
+            height: 40,
+            color: PdfColors.green200,
+          ),
+          pw.Column(
+            children: [
+              pw.Text(
+                'Closing Balance',
+                style: pw.TextStyle(
+                  fontSize: 12,
+                  color: PdfColors.grey600,
+                  fontWeight: pw.FontWeight.bold,
+                ),
+              ),
+              pw.SizedBox(height: 4),
+              pw.Text(
+                '$currencySymbol ${currencyFormat.format(totalClosingBalance)}',
+                style: pw.TextStyle(
+                  fontSize: 20,
+                  fontWeight: pw.FontWeight.bold,
+                  color: totalClosingBalance > 0
+                      ? PdfColors.red
+                      : PdfColors.green700,
                 ),
               ),
             ],
@@ -832,15 +843,17 @@ class _PaymentInListScreenState extends ConsumerState<PaymentInListScreen> {
       List<PaymentIn> payments,
       Map<int, String> customerNames,
       DateFormat dateFormat,
-      NumberFormat currencyFormat) {
+      NumberFormat currencyFormat,
+      String currencySymbol) {
     return pw.Table(
       border: pw.TableBorder.all(color: PdfColors.grey300),
       columnWidths: const {
         0: pw.FlexColumnWidth(1.5), // Date
         1: pw.FlexColumnWidth(2), // Receipt No
-        2: pw.FlexColumnWidth(3), // Customer
-        3: pw.FlexColumnWidth(2), // Amount
-        4: pw.FlexColumnWidth(2.5), // Description
+        2: pw.FlexColumnWidth(2.5), // Customer
+        3: pw.FlexColumnWidth(1.8), // Opening
+        4: pw.FlexColumnWidth(1.8), // Received
+        5: pw.FlexColumnWidth(1.8), // Closing
       },
       children: [
         // Header
@@ -850,8 +863,9 @@ class _PaymentInListScreenState extends ConsumerState<PaymentInListScreen> {
             _buildTableCell('Date', isHeader: true),
             _buildTableCell('Receipt No.', isHeader: true),
             _buildTableCell('Customer', isHeader: true),
-            _buildTableCell('Amount', isHeader: true),
-            _buildTableCell('Description', isHeader: true),
+            _buildTableCell('Opening', isHeader: true),
+            _buildTableCell('Received', isHeader: true),
+            _buildTableCell('Closing', isHeader: true),
           ],
         ),
         // Data rows
@@ -863,8 +877,11 @@ class _PaymentInListScreenState extends ConsumerState<PaymentInListScreen> {
               _buildTableCell(
                   customerNames[payment.partyId] ?? 'Unknown Customer'),
               _buildTableCell(
-                  'Rs ${currencyFormat.format(payment.totalAmount)}'),
-              _buildTableCell(payment.description ?? '-'),
+                  '$currencySymbol ${currencyFormat.format(payment.previousBalance)}'),
+              _buildTableCell(
+                  '$currencySymbol ${currencyFormat.format(payment.totalAmount)}'),
+              _buildTableCell(
+                  '$currencySymbol ${currencyFormat.format(payment.remainingBalance)}'),
             ],
           );
         }),
@@ -993,7 +1010,12 @@ class _PaymentsList extends ConsumerWidget {
           }
 
           return true;
-        }).toList();
+        }).toList()
+          ..sort((a, b) {
+            final paymentA = a['payment'] as PaymentIn;
+            final paymentB = b['payment'] as PaymentIn;
+            return paymentB.receiptDate.compareTo(paymentA.receiptDate);
+          });
 
         if (filtered.isEmpty) {
           return const Center(
@@ -1068,8 +1090,75 @@ class _PaymentCard extends ConsumerWidget {
     required this.onDeleted,
   });
 
+  void _showSnackBar(BuildContext context, String message,
+      {bool isError = false}) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(message),
+        backgroundColor: isError ? Colors.red : Colors.green,
+      ),
+    );
+  }
+
+  Future<void> _sharePaymentReceipt(
+    BuildContext context,
+    WidgetRef ref,
+    Party customer,
+    List<PaymentInLine> lines,
+  ) async {
+    final company = ref.read(currentCompanyProvider);
+    if (company == null) {
+      _showSnackBar(context, 'No company selected', isError: true);
+      return;
+    }
+
+    await ReceiptGenerator.shareReceipt(
+      context: context,
+      company: company,
+      party: customer,
+      payment: payment,
+      lines: lines,
+      totalAmount: payment.totalAmount,
+      imagePath: payment.attachmentPath,
+    );
+  }
+
+  Future<void> _printPaymentReceipt(
+    BuildContext context,
+    WidgetRef ref,
+    Party customer,
+    List<PaymentInLine> lines,
+  ) async {
+    final company = ref.read(currentCompanyProvider);
+    if (company == null) {
+      _showSnackBar(context, 'No company selected', isError: true);
+      return;
+    }
+
+    try {
+      final pdfBytes = await ReceiptGenerator.generateReceiptPdf(
+        company: company,
+        party: customer,
+        payment: payment,
+        lines: lines,
+        totalAmount: payment.totalAmount,
+        imagePath: payment.attachmentPath,
+      );
+
+      await Printing.layoutPdf(
+        onLayout: (_) async => pdfBytes,
+      );
+    } catch (e) {
+      _showSnackBar(context, 'Error printing payment: $e', isError: true);
+    }
+  }
+
   @override
   Widget build(BuildContext context, WidgetRef ref) {
+    final settings = ref.watch(settingsProvider);
+    final currencySymbol =
+        SettingsConstants.currencySymbols[settings.defaultCurrency] ??
+            settings.defaultCurrency;
     final isarService = ref.read(isarServiceProvider);
     final paymentDao = ref.read(paymentDaoProvider);
 
@@ -1080,6 +1169,7 @@ class _PaymentCard extends ConsumerWidget {
       ]),
       builder: (context, AsyncSnapshot<List<dynamic>> snapshot) {
         final customer = snapshot.data?[0] as Party?;
+        final lines = (snapshot.data?[1] as List<PaymentInLine>?) ?? [];
 
         return Dismissible(
           key: Key('payment_${payment.id}'),
@@ -1190,6 +1280,14 @@ class _PaymentCard extends ConsumerWidget {
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
                               Text(
+                                '${payment.receiptNo} • ${DateFormat('dd MMM yy').format(payment.receiptDate)}',
+                                style: TextStyle(
+                                  color: Colors.grey.shade600,
+                                  fontSize: 12,
+                                ),
+                              ),
+                              const SizedBox(height: 2),
+                              Text(
                                 customer?.name ?? 'Unknown Customer',
                                 style: const TextStyle(
                                   fontWeight: FontWeight.bold,
@@ -1198,14 +1296,6 @@ class _PaymentCard extends ConsumerWidget {
                                 ),
                                 maxLines: 1,
                                 overflow: TextOverflow.ellipsis,
-                              ),
-                              const SizedBox(height: 2),
-                              Text(
-                                '${payment.receiptDate.day.toString().padLeft(2, '0')}/${payment.receiptDate.month.toString().padLeft(2, '0')}/${payment.receiptDate.year} • ${payment.receiptDate.hour.toString().padLeft(2, '0')}:${payment.receiptDate.minute.toString().padLeft(2, '0')}',
-                                style: TextStyle(
-                                  color: Colors.grey.shade600,
-                                  fontSize: 12,
-                                ),
                               ),
                             ],
                           ),
@@ -1238,35 +1328,62 @@ class _PaymentCard extends ConsumerWidget {
                       mainAxisAlignment: MainAxisAlignment.spaceBetween,
                       children: [
                         Expanded(
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Text(
-                                'Total: Rs ${payment.totalAmount.toStringAsFixed(0)}',
-                                style: const TextStyle(
-                                  fontWeight: FontWeight.w600,
-                                  fontSize: 14,
-                                  color: Colors.black87,
-                                ),
+                          child: Text(
+                            '$currencySymbol ${payment.totalAmount.toStringAsFixed(0)}',
+                            style: const TextStyle(
+                              fontWeight: FontWeight.bold,
+                              fontSize: 18,
+                              color: Colors.green,
+                            ),
+                          ),
+                        ),
+                        Row(
+                          children: [
+                            OutlinedButton.icon(
+                              onPressed: (customer == null)
+                                  ? null
+                                  : () => _sharePaymentReceipt(
+                                      context, ref, customer, lines),
+                              icon: Icon(
+                                Icons.share,
+                                size: 16,
+                                color: Colors.blue.shade700,
                               ),
-                              Text(
-                                'Balance: Rs ${payment.totalAmount.toStringAsFixed(0)}',
+                              label: Text(
+                                'Share',
+                                style: TextStyle(color: Colors.blue.shade700),
+                              ),
+                              style: OutlinedButton.styleFrom(
+                                visualDensity: VisualDensity.compact,
+                                backgroundColor: Colors.blue.shade50,
+                                side: BorderSide(color: Colors.blue.shade200),
+                              ),
+                            ),
+                            const SizedBox(width: 8),
+                            OutlinedButton.icon(
+                              onPressed: (customer == null)
+                                  ? null
+                                  : () => _printPaymentReceipt(
+                                      context, ref, customer, lines),
+                              icon: Icon(
+                                Icons.print,
+                                size: 16,
+                                color: Colors.deepPurple.shade700,
+                              ),
+                              label: Text(
+                                'Print',
                                 style: TextStyle(
-                                  fontSize: 12,
-                                  color: Colors.grey.shade600,
-                                ),
+                                    color: Colors.deepPurple.shade700),
                               ),
-                            ],
-                          ),
-                        ),
-                        Text(
-                          'Rs ${payment.totalAmount.toStringAsFixed(0)}',
-                          style: const TextStyle(
-                            fontWeight: FontWeight.bold,
-                            fontSize: 18,
-                            color: Colors.green,
-                          ),
-                        ),
+                              style: OutlinedButton.styleFrom(
+                                visualDensity: VisualDensity.compact,
+                                backgroundColor: Colors.deepPurple.shade50,
+                                side: BorderSide(
+                                    color: Colors.deepPurple.shade200),
+                              ),
+                            ),
+                          ],
+                        )
                       ],
                     ),
                   ],

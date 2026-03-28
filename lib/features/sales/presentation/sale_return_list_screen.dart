@@ -4,6 +4,7 @@ import 'package:go_router/go_router.dart';
 import 'package:intl/intl.dart';
 
 import '../../../core/config/providers.dart';
+import '../../../core/providers/settings_provider.dart';
 import '../../../core/widgets/navigation_drawer_helper.dart';
 import '../../../data/models/invoice_stock_models.dart';
 import '../../../data/models/party_model.dart';
@@ -21,8 +22,16 @@ class SaleReturnListScreen extends ConsumerStatefulWidget {
 class _SaleReturnListScreenState extends ConsumerState<SaleReturnListScreen> {
   final _searchController = TextEditingController();
   String _searchQuery = '';
-  final _currencyFormat = NumberFormat.currency(symbol: 'Rs ');
   final _dateFormat = DateFormat('dd MMM yyyy');
+
+  String get _currencySymbol {
+    final settings = ref.read(settingsProvider);
+    return SettingsConstants.currencySymbols[settings.defaultCurrency] ??
+        settings.defaultCurrency;
+  }
+
+  NumberFormat get _currencyFormat =>
+      NumberFormat.currency(symbol: '$_currencySymbol ');
 
   @override
   void dispose() {

@@ -14,6 +14,7 @@ import 'package:veyo_sync/data/models/transaction_model.dart'
         TransactionLine;
 
 import '../../core/config/providers.dart';
+import '../../core/providers/settings_provider.dart';
 import '../../data/models/company_model.dart';
 import '../../data/models/inventory_models.dart';
 import '../../data/models/invoice_stock_models.dart';
@@ -34,10 +35,21 @@ class _PurchaseReportScreenState extends ConsumerState<PurchaseReportScreen> {
   Party? _selectedSupplier;
   final String _reportType = 'summary'; // summary, detailed, supplier
   final _dateFormat = DateFormat('dd MMM yyyy');
-  final _currencyFormat = NumberFormat.currency(symbol: 'PKR ');
+  late NumberFormat _currencyFormat;
+
+  @override
+  void initState() {
+    super.initState();
+    _currencyFormat = NumberFormat.currency(symbol: 'PKR ');
+  }
 
   @override
   Widget build(BuildContext context) {
+    final settings = ref.watch(settingsProvider);
+    final currencySymbol =
+        SettingsConstants.currencySymbols[settings.defaultCurrency] ??
+            settings.defaultCurrency;
+    _currencyFormat = NumberFormat.currency(symbol: '$currencySymbol ');
     final company = ref.watch(currentCompanyProvider);
     final isar = ref.watch(isarServiceProvider).isar;
     final theme = Theme.of(context);
@@ -1092,7 +1104,7 @@ class _PurchaseReportScreenState extends ConsumerState<PurchaseReportScreen> {
             mainAxisAlignment: pw.MainAxisAlignment.end,
             children: [
               pw.Text(
-                'Grand Total: Rs ${invoice.grandTotal.toStringAsFixed(2)}',
+                'Grand Total: ${_currencyFormat.format(invoice.grandTotal)}',
                 style: pw.TextStyle(
                   fontSize: 16,
                   fontWeight: pw.FontWeight.bold,

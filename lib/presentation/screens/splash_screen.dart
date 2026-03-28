@@ -47,8 +47,12 @@ class _SplashScreenState extends ConsumerState<SplashScreen> {
 
       if (!mounted) return;
 
+      // Cache all providers at the start
       final authService = ref.read(authServiceProvider);
       final apiClient = ref.read(apiClientProvider);
+      final rbacService = ref.read(rbacServiceProvider);
+      final isarService = ref.read(isarServiceProvider);
+      final syncService = ref.read(syncServiceProvider);
 
       // Validate and restore current session from the stored auth token.
       if (authService.isLoggedIn) {
@@ -57,7 +61,6 @@ class _SplashScreenState extends ConsumerState<SplashScreen> {
         if (user != null) {
           // Restore user state
           ref.read(currentUserProvider.notifier).state = user;
-          final rbacService = ref.read(rbacServiceProvider);
           await rbacService.ensureBootstrapAssignmentsForUser(user.id);
           await rbacService.cacheGlobalAdminState(user.id);
 
@@ -67,7 +70,7 @@ class _SplashScreenState extends ConsumerState<SplashScreen> {
             final companyId = authService.selectedCompanyId;
             if (companyId != null) {
               try {
-                final isar = ref.read(isarServiceProvider).isar;
+                final isar = isarService.isar;
                 final service = CompanyService(isar);
                 final company = await service.getCompanyById(companyId);
 
@@ -83,7 +86,6 @@ class _SplashScreenState extends ConsumerState<SplashScreen> {
 
                   // Try automatic server login + sync in background.
                   Future(() async {
-                    final syncService = ref.read(syncServiceProvider);
                     await syncService.autoLoginAndSyncAllLocalCompanies();
                   });
 
@@ -123,7 +125,6 @@ class _SplashScreenState extends ConsumerState<SplashScreen> {
             await rbacService.clearCachedCurrentCompanyRole();
             // Try automatic server login + sync in background.
             Future(() async {
-              final syncService = ref.read(syncServiceProvider);
               await syncService.autoLoginAndSyncAllLocalCompanies();
             });
 
@@ -136,7 +137,7 @@ class _SplashScreenState extends ConsumerState<SplashScreen> {
         } else {
           // Token is missing or invalid.
           await authService.clearAuthSession();
-          await ref.read(rbacServiceProvider).clearAllCachedRoleState();
+          await rbacService.clearAllCachedRoleState();
           if (mounted && !_isNavigating) {
             _isNavigating = true;
             context.go('/login');
@@ -144,7 +145,7 @@ class _SplashScreenState extends ConsumerState<SplashScreen> {
         }
       } else {
         // Not logged in, go to login
-        await ref.read(rbacServiceProvider).clearAllCachedRoleState();
+        await rbacService.clearAllCachedRoleState();
         if (mounted && !_isNavigating) {
           _isNavigating = true;
           context.go('/login');

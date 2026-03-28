@@ -51,7 +51,6 @@
 		<string>This app needs access to the photo library to select images for receipts.</string>
 		<key>UIStatusBarHidden</key>
 		<false/>
-
 		<!-- Network Security: App Transport Security -->
 		<key>NSAppTransportSecurity</key>
 		<dict>

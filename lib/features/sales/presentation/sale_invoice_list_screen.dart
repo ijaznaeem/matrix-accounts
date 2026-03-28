@@ -9,6 +9,7 @@ import 'package:pdf/widgets.dart' as pw;
 import 'package:printing/printing.dart';
 
 import '../../../core/config/providers.dart';
+import '../../../core/providers/settings_provider.dart';
 import '../../../core/widgets/navigation_drawer_helper.dart';
 import '../../../data/models/invoice_stock_models.dart';
 import '../../../data/models/party_model.dart';
@@ -26,14 +27,21 @@ class SaleInvoiceListScreen extends ConsumerStatefulWidget {
 class _SaleInvoiceListScreenState extends ConsumerState<SaleInvoiceListScreen> {
   late final TextEditingController _searchController;
   String _searchQuery = '';
-  final _currencyFormat = NumberFormat.currency(symbol: 'PKR ');
+  late NumberFormat _currencyFormat;
   final _cardMargin = const EdgeInsets.symmetric(vertical: 8);
   final _cardBorderRadius = 12.0;
+
+  String get _currencySymbol {
+    final settings = ref.read(settingsProvider);
+    return SettingsConstants.currencySymbols[settings.defaultCurrency] ??
+        settings.defaultCurrency;
+  }
 
   @override
   void initState() {
     super.initState();
     _searchController = TextEditingController();
+    _currencyFormat = NumberFormat.currency(symbol: 'PKR ');
   }
 
   @override
@@ -121,6 +129,8 @@ class _SaleInvoiceListScreenState extends ConsumerState<SaleInvoiceListScreen> {
     final theme = Theme.of(context);
     final colorScheme = theme.colorScheme;
     final company = ref.watch(currentCompanyProvider);
+    ref.watch(settingsProvider);
+    _currencyFormat = NumberFormat.currency(symbol: '$_currencySymbol ');
 
     if (company == null) {
       return Scaffold(
@@ -205,7 +215,7 @@ class _SaleInvoiceListScreenState extends ConsumerState<SaleInvoiceListScreen> {
                                 ),
                                 const SizedBox(height: 4),
                                 Text(
-                                  'Rs ${NumberFormat('#,##0.0').format(totalAmount)}',
+                                  '$_currencySymbol ${NumberFormat('#,##0.0').format(totalAmount)}',
                                   style: theme.textTheme.titleMedium?.copyWith(
                                     color: colorScheme.onPrimaryContainer,
                                     fontWeight: FontWeight.bold,
@@ -285,7 +295,8 @@ class _SaleInvoiceListScreenState extends ConsumerState<SaleInvoiceListScreen> {
                   );
                 }
 
-                final invoices = snapshot.data ?? [];
+                final invoices = [...(snapshot.data ?? <Invoice>[])]
+                  ..sort((a, b) => b.invoiceDate.compareTo(a.invoiceDate));
 
                 if (invoices.isEmpty) {
                   return Center(
@@ -472,7 +483,7 @@ class _SaleInvoiceListScreenState extends ConsumerState<SaleInvoiceListScreen> {
                                 crossAxisAlignment: CrossAxisAlignment.center,
                                 children: [
                                   Text(
-                                    'Rs ${NumberFormat('#,##0').format(invoice.grandTotal)}',
+                                    '$_currencySymbol ${NumberFormat('#,##0').format(invoice.grandTotal)}',
                                     style: TextStyle(
                                       fontSize: 13,
                                       fontWeight: FontWeight.bold,

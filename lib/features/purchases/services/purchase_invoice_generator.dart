@@ -21,6 +21,20 @@ class PurchaseInvoiceGenerator {
   static final _dateFormat = DateFormat('dd MMM, yyyy hh:mm a');
   static final _currencyFormat = NumberFormat('#,##,##0.00');
 
+  static String _currencySymbol(Company company) {
+    const symbols = {
+      'PKR': '₨',
+      'USD': r'$',
+      'EUR': '€',
+      'GBP': '£',
+      'INR': '₹',
+      'SAR': 'ر.س',
+      'AED': 'د.إ',
+    };
+    final currency = company.primaryCurrency ?? 'PKR';
+    return symbols[currency] ?? currency;
+  }
+
   // Generate purchase invoice as image
   static Future<Uint8List> generatePurchaseInvoiceImage({
     required Company company,
@@ -36,6 +50,7 @@ class PurchaseInvoiceGenerator {
     String? attachmentImagePath,
   }) async {
     try {
+      final currencySymbol = _currencySymbol(company);
       // Debug: Print opening balance parameter
       print('=== PURCHASE OPENING BALANCE DEBUG ===');
       print('openingBalance parameter: $openingBalance');
@@ -322,7 +337,7 @@ class PurchaseInvoiceGenerator {
       yPos += 10;
       _drawText(
           canvas,
-          'Total Qty: ${totalQuantity == totalQuantity.roundToDouble() ? totalQuantity.toStringAsFixed(0) : totalQuantity.toStringAsFixed(2)} | Total Rate: Rs ${_currencyFormat.format(totalRate)}',
+          'Total Qty: ${totalQuantity == totalQuantity.roundToDouble() ? totalQuantity.toStringAsFixed(0) : totalQuantity.toStringAsFixed(2)} | Total Rate: $currencySymbol ${_currencyFormat.format(totalRate)}',
           Offset(520, yPos),
           const TextStyle(
               fontSize: 12, fontWeight: FontWeight.bold, color: Colors.orange));
@@ -335,7 +350,7 @@ class PurchaseInvoiceGenerator {
         ..style = PaintingStyle.fill;
       canvas.drawRRect(
         RRect.fromRectAndRadius(
-          Rect.fromLTWH(40, yPos, 720, 100),
+          Rect.fromLTWH(40, yPos, 720, 50),
           const Radius.circular(8),
         ),
         amountBoxPaint,
@@ -347,7 +362,7 @@ class PurchaseInvoiceGenerator {
         ..strokeWidth = 1;
       canvas.drawRRect(
         RRect.fromRectAndRadius(
-          Rect.fromLTWH(40, yPos, 720, 100),
+          Rect.fromLTWH(40, yPos, 720, 50),
           const Radius.circular(8),
         ),
         amountBorderPaint,
@@ -363,14 +378,14 @@ class PurchaseInvoiceGenerator {
               color: Colors.black87));
       _drawRightAlignedText(
           canvas,
-          'Rs ${_currencyFormat.format(calculatedSubTotal)}',
+          '$currencySymbol ${_currencyFormat.format(calculatedSubTotal)}',
           Offset(740, yPos + 20),
           const TextStyle(
               fontSize: 16,
               fontWeight: FontWeight.bold,
               color: Colors.black87));
 
-      yPos += 120;
+      yPos += 70;
 
       // Always show Payment Summary section using the balance snapshot saved on invoice
       final previousBalance = invoice.previousBalance;
@@ -431,7 +446,7 @@ class PurchaseInvoiceGenerator {
           const TextStyle(fontSize: 14, color: Colors.black87));
       _drawText(
           canvas,
-          'Rs ${_currencyFormat.format(previousBalance)}',
+          '$currencySymbol ${_currencyFormat.format(previousBalance)}',
           Offset(600, yPos),
           const TextStyle(fontSize: 14, color: Colors.black87));
       yPos += 25;
@@ -441,7 +456,7 @@ class PurchaseInvoiceGenerator {
           const TextStyle(fontSize: 14, color: Colors.black87));
       _drawText(
           canvas,
-          'Rs ${_currencyFormat.format(totalToDisplay)}',
+          '$currencySymbol ${_currencyFormat.format(totalToDisplay)}',
           Offset(600, yPos),
           const TextStyle(
               fontSize: 14, fontWeight: FontWeight.bold, color: Colors.black));
@@ -452,7 +467,7 @@ class PurchaseInvoiceGenerator {
           const TextStyle(fontSize: 14, color: Colors.black87));
       _drawText(
           canvas,
-          'Rs ${_currencyFormat.format(totalPaid)}',
+          '$currencySymbol ${_currencyFormat.format(totalPaid)}',
           Offset(600, yPos),
           const TextStyle(fontSize: 14, color: Colors.black));
       yPos += 25;
@@ -464,7 +479,7 @@ class PurchaseInvoiceGenerator {
       _drawText(
           canvas,
           closingBalance > 0
-              ? 'Rs ${_currencyFormat.format(closingBalance)}'
+              ? '$currencySymbol ${_currencyFormat.format(closingBalance)}'
               : 'CLEARED',
           Offset(600, yPos),
           TextStyle(
@@ -508,8 +523,8 @@ class PurchaseInvoiceGenerator {
         _drawText(
             canvas,
             supplierBalance >= 0
-                ? 'We Owe: Rs ${_currencyFormat.format(supplierBalance.abs())}'
-                : 'They Owe: Rs ${_currencyFormat.format(supplierBalance.abs())}',
+                ? 'We Owe: $currencySymbol ${_currencyFormat.format(supplierBalance.abs())}'
+                : 'They Owe: $currencySymbol ${_currencyFormat.format(supplierBalance.abs())}',
             Offset(500, yPos + 15),
             const TextStyle(
                 fontSize: 14,
@@ -562,6 +577,7 @@ class PurchaseInvoiceGenerator {
         yPos += notesBoxH + 24;
       }
 
+      yPos += 70;
       // ── Attachment image section ───────────────────────────────────────────
       if (attachmentUiImage != null) {
         _drawText(

@@ -5,14 +5,17 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:image_picker/image_picker.dart';
+import 'package:printing/printing.dart';
 
 import '../../../core/config/providers.dart';
 import '../../../core/database/dao/payment_dao.dart';
+import '../../../core/providers/settings_provider.dart';
 import '../../../data/models/company_model.dart';
 import '../../../data/models/party_model.dart';
 import '../../../data/models/payment_models.dart';
 import '../../../data/models/user_model.dart';
-import '../../parties/presentation/party_selection_screen.dart';
+import '../../../presentation/widgets/searchable_list.dart';
+import '../../parties/logic/party_provider.dart';
 import '../logic/payment_providers.dart';
 import '../services/receipt_generator.dart';
 
@@ -49,8 +52,17 @@ class _PaymentInFormScreenState extends ConsumerState<PaymentInFormScreen> {
   final List<PaymentLineDraft> _paymentLines = [];
   final _descriptionCtrl = TextEditingController();
   bool _isLoading = true;
+  bool _isSaving = false;
+  double _livePartyBalance = 0;
+  double _previousBalance = 0;
   String? _selectedImagePath;
   final ImagePicker _imagePicker = ImagePicker();
+
+  String get _currencySymbol {
+    final settings = ref.read(settingsProvider);
+    return SettingsConstants.currencySymbols[settings.defaultCurrency] ??
+        settings.defaultCurrency;
+  }
 
   @override
   void initState() {
@@ -104,6 +116,13 @@ class _PaymentInFormScreenState extends ConsumerState<PaymentInFormScreen> {
 
       final lines = await paymentDao.getPaymentInLines(widget.paymentInId!);
       final customer = await isar.partys.get(payment.partyId);
+      final liveBalance = await paymentDao.getPartyLiveBalance(
+        payment.partyId,
+        payment.companyId,
+      );
+      final previousBalance = payment.previousBalance == 0
+          ? (liveBalance + payment.totalAmount)
+          : payment.previousBalance;
 
       setState(() {
         _selectedCustomer = customer;
@@ -111,6 +130,8 @@ class _PaymentInFormScreenState extends ConsumerState<PaymentInFormScreen> {
         _receiptNoCtrl.text = payment.receiptNo;
         _descriptionCtrl.text = payment.description ?? '';
         _selectedImagePath = payment.attachmentPath;
+        _livePartyBalance = liveBalance;
+        _previousBalance = previousBalance;
         _paymentLines.clear();
 
         for (final line in lines) {
@@ -196,11 +217,29 @@ class _PaymentInFormScreenState extends ConsumerState<PaymentInFormScreen> {
   double get _totalReceived =>
       _paymentLines.fold<double>(0, (sum, l) => sum + l.amount);
 
+  double get _closingBalance => _previousBalance - _totalReceived;
+
+  Future<void> _loadPartyBalance(Party customer) async {
+    final company = ref.read(currentCompanyProvider);
+    if (company == null) return;
+
+    final paymentDao = ref.read(paymentDaoProvider);
+    final liveBalance =
+        await paymentDao.getPartyLiveBalance(customer.id, company.id);
+
+    if (!mounted) return;
+    setState(() {
+      _livePartyBalance = liveBalance;
+      _previousBalance = liveBalance;
+    });
+  }
+
   @override
   Widget build(BuildContext context) {
     final company = ref.watch(currentCompanyProvider);
     final user = ref.watch(currentUserProvider);
     final accountsAsync = ref.watch(paymentAccountsProvider);
+    final partiesAsync = ref.watch(partyListProvider);
     final paymentDao = ref.read(paymentDaoProvider);
 
     if (company == null) {
@@ -307,76 +346,18 @@ class _PaymentInFormScreenState extends ConsumerState<PaymentInFormScreen> {
                 ],
               ),
               const SizedBox(height: 24),
-              _buildCustomerSelector(),
+              _buildCustomerSelector(partiesAsync),
               if (_selectedCustomer != null) ...[
                 const SizedBox(height: 12),
-                FutureBuilder<double>(
-                  future: paymentDao.getPartyReceivedBalance(
-                      _selectedCustomer!.id, company.id),
-                  builder: (context, snapshot) {
-                    final balance = snapshot.data ?? 0;
-                    return Text(
-                      'Party Balance: Rs ${balance.toStringAsFixed(2)}',
-                      style: const TextStyle(
-                        color: Colors.orange,
-                        fontSize: 14,
-                        fontWeight: FontWeight.w500,
-                      ),
-                    );
-                  },
+                Text(
+                  'Party Live Balance: $_currencySymbol ${_livePartyBalance.toStringAsFixed(2)}',
+                  style: TextStyle(
+                    color: _livePartyBalance > 0 ? Colors.red : Colors.green,
+                    fontSize: 14,
+                    fontWeight: FontWeight.w600,
+                  ),
                 ),
               ],
-              const SizedBox(height: 24),
-              Container(
-                padding: const EdgeInsets.all(16),
-                decoration: BoxDecoration(
-                  color: Colors.grey.shade100,
-                  borderRadius: BorderRadius.circular(12),
-                ),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                      children: [
-                        const Text(
-                          'Received',
-                          style: TextStyle(fontSize: 16),
-                        ),
-                        Text(
-                          'Rs ${_totalReceived.toStringAsFixed(2)}',
-                          style: const TextStyle(
-                            fontSize: 16,
-                            fontWeight: FontWeight.bold,
-                          ),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 12),
-                    Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                      children: [
-                        const Text(
-                          'Total Amount',
-                          style: TextStyle(
-                            fontSize: 18,
-                            fontWeight: FontWeight.bold,
-                            color: Colors.green,
-                          ),
-                        ),
-                        Text(
-                          'Rs ${_totalReceived.toStringAsFixed(2)}',
-                          style: const TextStyle(
-                            fontSize: 18,
-                            fontWeight: FontWeight.bold,
-                            color: Colors.green,
-                          ),
-                        ),
-                      ],
-                    ),
-                  ],
-                ),
-              ),
               const SizedBox(height: 24),
               const Text(
                 'Payment Type',
@@ -407,7 +388,26 @@ class _PaymentInFormScreenState extends ConsumerState<PaymentInFormScreen> {
                         return _buildPaymentLine(line, accounts, index);
                       }).toList(),
                       const SizedBox(height: 16),
+                      InkWell(
+                        onTap: () => _showPaymentTypeDialog(accounts),
+                        child: Row(
+                          children: [
+                            Icon(Icons.add_circle_outline,
+                                color: Colors.blue.shade700),
+                            const SizedBox(width: 8),
+                            Text(
+                              '+ Add Payment Type',
+                              style: TextStyle(
+                                color: Colors.blue.shade700,
+                                fontSize: 16,
+                                fontWeight: FontWeight.w500,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
                       if (_paymentLines.isNotEmpty) ...[
+                        const SizedBox(height: 16),
                         Container(
                           padding: const EdgeInsets.all(12),
                           decoration: BoxDecoration(
@@ -418,14 +418,14 @@ class _PaymentInFormScreenState extends ConsumerState<PaymentInFormScreen> {
                             mainAxisAlignment: MainAxisAlignment.spaceBetween,
                             children: [
                               const Text(
-                                'Received Rs',
+                                'Received',
                                 style: TextStyle(
                                   fontSize: 14,
                                   fontWeight: FontWeight.w500,
                                 ),
                               ),
                               Text(
-                                _totalReceived.toStringAsFixed(2),
+                                '$_currencySymbol ${_totalReceived.toStringAsFixed(2)}',
                                 style: const TextStyle(
                                   fontSize: 14,
                                   fontWeight: FontWeight.bold,
@@ -440,6 +440,79 @@ class _PaymentInFormScreenState extends ConsumerState<PaymentInFormScreen> {
                 },
                 loading: () => const Center(child: CircularProgressIndicator()),
                 error: (error, stack) => Text('Error: $error'),
+              ),
+              const SizedBox(height: 24),
+              Container(
+                padding: const EdgeInsets.all(16),
+                decoration: BoxDecoration(
+                  color: Colors.grey.shade100,
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        const Text(
+                          'Opening Balance',
+                          style: TextStyle(fontSize: 16),
+                        ),
+                        Text(
+                          '$_currencySymbol ${_previousBalance.toStringAsFixed(2)}',
+                          style: const TextStyle(
+                            fontSize: 16,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 12),
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        const Text(
+                          'Received Amount',
+                          style: TextStyle(
+                            fontSize: 18,
+                            fontWeight: FontWeight.bold,
+                            color: Colors.blue,
+                          ),
+                        ),
+                        Text(
+                          '$_currencySymbol ${_totalReceived.toStringAsFixed(2)}',
+                          style: const TextStyle(
+                            fontSize: 18,
+                            fontWeight: FontWeight.bold,
+                            color: Colors.blue,
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 12),
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        const Text(
+                          'Closing Balance',
+                          style: TextStyle(
+                            fontSize: 18,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                        Text(
+                          '$_currencySymbol ${_closingBalance.toStringAsFixed(2)}',
+                          style: TextStyle(
+                            fontSize: 18,
+                            fontWeight: FontWeight.bold,
+                            color:
+                                _closingBalance > 0 ? Colors.red : Colors.green,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
               ),
               const SizedBox(height: 24),
               Row(
@@ -535,63 +608,42 @@ class _PaymentInFormScreenState extends ConsumerState<PaymentInFormScreen> {
                 children: [
                   Expanded(
                     child: OutlinedButton(
-                      onPressed: () async {
-                        await _savePaymentIn(paymentDao, company, user,
-                            saveAndNew: true);
-                      },
+                      onPressed: _isSaving
+                          ? null
+                          : () => Navigator.of(context).maybePop(),
                       style: OutlinedButton.styleFrom(
                         padding: const EdgeInsets.symmetric(vertical: 16),
                         shape: RoundedRectangleBorder(
                           borderRadius: BorderRadius.circular(12),
                         ),
                       ),
-                      child: const Text('Save & New'),
+                      child: const Text('Cancel'),
                     ),
                   ),
                   const SizedBox(width: 12),
                   Expanded(
                     flex: 2,
                     child: ElevatedButton(
-                      onPressed: () =>
-                          _savePaymentIn(paymentDao, company, user),
+                      onPressed: _isSaving
+                          ? null
+                          : () => _savePaymentIn(paymentDao, company, user),
                       style: ElevatedButton.styleFrom(
                         padding: const EdgeInsets.symmetric(vertical: 16),
                         shape: RoundedRectangleBorder(
                           borderRadius: BorderRadius.circular(12),
                         ),
                       ),
-                      child: const Row(
+                      child: Row(
                         mainAxisAlignment: MainAxisAlignment.center,
                         children: [
-                          Text('Save'),
-                          SizedBox(width: 8),
-                          Icon(Icons.arrow_forward, size: 20),
+                          Text(_isSaving ? 'Saving...' : 'Save'),
+                          const SizedBox(width: 8),
+                          const Icon(Icons.arrow_forward, size: 20),
                         ],
                       ),
                     ),
                   ),
                 ],
-              ),
-              const SizedBox(height: 12),
-              SizedBox(
-                width: double.infinity,
-                child: ElevatedButton.icon(
-                  onPressed: () async {
-                    await _saveAndSharePaymentIn(paymentDao, company, user);
-                  },
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: Colors.green,
-                    padding: const EdgeInsets.symmetric(vertical: 16),
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(12),
-                    ),
-                  ),
-                  icon: const Icon(Icons.share, color: Colors.white),
-                  label: const Text(
-                    'Save & Share',
-                    style: TextStyle(color: Colors.white, fontSize: 16),
-                  ),
-                ),
               ),
               const SizedBox(height: 100),
             ],
@@ -601,38 +653,41 @@ class _PaymentInFormScreenState extends ConsumerState<PaymentInFormScreen> {
     );
   }
 
-  Widget _buildCustomerSelector() {
-    return GestureDetector(
-      onTap: () async {
-        final selected = await Navigator.push<Party>(
-          context,
-          MaterialPageRoute(
-            builder: (context) => const PartySelectionScreen(),
+  Widget _buildCustomerSelector(AsyncValue<List<Party>> partiesAsync) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          'Party Name *',
+          style: TextStyle(
+            fontSize: 12,
+            color: Colors.grey.shade600,
           ),
-        );
-        if (selected != null) {
-          setState(() => _selectedCustomer = selected);
-        }
-      },
-      child: Container(
-        padding: const EdgeInsets.all(16),
-        decoration: BoxDecoration(
-          border: Border.all(color: Colors.grey.shade300),
-          borderRadius: BorderRadius.circular(12),
         ),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              'Customer Name *',
-              style: TextStyle(
-                fontSize: 12,
-                color: Colors.grey.shade600,
+        const SizedBox(height: 8),
+        partiesAsync.when(
+          loading: () => Container(
+            height: 52,
+            decoration: BoxDecoration(
+              border: Border.all(color: Colors.grey.shade300),
+              borderRadius: BorderRadius.circular(12),
+            ),
+            child: const Center(
+              child: SizedBox(
+                width: 20,
+                height: 20,
+                child: CircularProgressIndicator(strokeWidth: 2),
               ),
             ),
-            const SizedBox(height: 8),
-            Text(
-              _selectedCustomer?.name ?? 'Select Customer',
+          ),
+          error: (_, __) => Container(
+            padding: const EdgeInsets.all(16),
+            decoration: BoxDecoration(
+              border: Border.all(color: Colors.grey.shade300),
+              borderRadius: BorderRadius.circular(12),
+            ),
+            child: Text(
+              _selectedCustomer?.name ?? 'Select Party',
               style: TextStyle(
                 fontSize: 16,
                 color: _selectedCustomer == null
@@ -640,9 +695,45 @@ class _PaymentInFormScreenState extends ConsumerState<PaymentInFormScreen> {
                     : Colors.black,
               ),
             ),
-          ],
+          ),
+          data: (parties) {
+            final customers = parties
+                .where(
+                  (party) =>
+                      party.partyType == PartyType.customer ||
+                      party.partyType == PartyType.both,
+                )
+                .toList();
+
+            return SearchableDropdown<Party>(
+              items: customers,
+              hintText: _selectedCustomer?.name ?? 'Select Party',
+              isSelected: _selectedCustomer != null,
+              onClear: () {
+                setState(() {
+                  _selectedCustomer = null;
+                  _livePartyBalance = 0;
+                  _previousBalance = 0;
+                });
+              },
+              onSelected: (selected) async {
+                setState(() => _selectedCustomer = selected);
+                await _loadPartyBalance(selected);
+              },
+              searchMatcher: (party) => party.name,
+              itemBuilder: (party) => ListTile(
+                dense: true,
+                title: Text(
+                  party.name,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ),
+              maxHeight: 300,
+            );
+          },
         ),
-      ),
+      ],
     );
   }
 
@@ -699,7 +790,7 @@ class _PaymentInFormScreenState extends ConsumerState<PaymentInFormScreen> {
               keyboardType:
                   const TextInputType.numberWithOptions(decimal: true),
               decoration: InputDecoration(
-                prefixText: 'Rs ',
+                prefixText: '$_currencySymbol ',
                 isDense: true,
                 border: OutlineInputBorder(
                   borderRadius: BorderRadius.circular(4),
@@ -722,12 +813,176 @@ class _PaymentInFormScreenState extends ConsumerState<PaymentInFormScreen> {
     );
   }
 
+  void _showPaymentTypeDialog(List<PaymentAccount> accounts) {
+    showModalBottomSheet(
+      context: context,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (context) {
+        return Padding(
+          padding: const EdgeInsets.all(16),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text(
+                'Payment Type',
+                style: TextStyle(
+                  fontSize: 20,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+              const SizedBox(height: 16),
+              ...accounts.map((account) {
+                return ListTile(
+                  leading: Text(
+                    account.icon ?? '💰',
+                    style: const TextStyle(fontSize: 24),
+                  ),
+                  title: Text(account.accountName),
+                  subtitle: account.accountType == PaymentAccountType.bank
+                      ? Text(account.bankName ?? '')
+                      : null,
+                  onTap: () {
+                    setState(() {
+                      _paymentLines.add(PaymentLineDraft(
+                        accountId: account.id,
+                        accountName: account.accountName,
+                        accountIcon: account.icon,
+                        amount: 0,
+                      ));
+                    });
+                    Navigator.pop(context);
+                  },
+                );
+              }).toList(),
+              const Divider(),
+              ListTile(
+                leading: const Icon(Icons.add_circle, color: Colors.blue),
+                title: const Text(
+                  '+ Add Bank A/c',
+                  style: TextStyle(
+                    color: Colors.blue,
+                    fontWeight: FontWeight.w500,
+                  ),
+                ),
+                onTap: () {
+                  Navigator.pop(context);
+                  _showAddBankAccountDialog();
+                },
+              ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
+  void _showAddBankAccountDialog() {
+    final nameCtrl = TextEditingController();
+    final bankCtrl = TextEditingController();
+    final accountNoCtrl = TextEditingController();
+    final ifscCtrl = TextEditingController();
+
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Add Bank Account'),
+        content: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              TextField(
+                controller: nameCtrl,
+                decoration: const InputDecoration(
+                  labelText: 'Account Name *',
+                  border: OutlineInputBorder(),
+                ),
+              ),
+              const SizedBox(height: 12),
+              TextField(
+                controller: bankCtrl,
+                decoration: const InputDecoration(
+                  labelText: 'Bank Name *',
+                  border: OutlineInputBorder(),
+                ),
+              ),
+              const SizedBox(height: 12),
+              TextField(
+                controller: accountNoCtrl,
+                decoration: const InputDecoration(
+                  labelText: 'Account Number',
+                  border: OutlineInputBorder(),
+                ),
+              ),
+              const SizedBox(height: 12),
+              TextField(
+                controller: ifscCtrl,
+                decoration: const InputDecoration(
+                  labelText: 'IFSC Code',
+                  border: OutlineInputBorder(),
+                ),
+              ),
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Cancel'),
+          ),
+          ElevatedButton(
+            onPressed: () async {
+              if (nameCtrl.text.isEmpty || bankCtrl.text.isEmpty) {
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(
+                    content: Text('Please fill required fields'),
+                    backgroundColor: Colors.red,
+                  ),
+                );
+                return;
+              }
+
+              final company = ref.read(currentCompanyProvider);
+              if (company == null) return;
+
+              final paymentDao = ref.read(paymentDaoProvider);
+              await paymentDao.createPaymentAccount(
+                companyId: company.id,
+                accountType: PaymentAccountType.bank,
+                accountName: nameCtrl.text,
+                bankName: bankCtrl.text,
+                accountNumber:
+                    accountNoCtrl.text.isEmpty ? null : accountNoCtrl.text,
+                ifscCode: ifscCtrl.text.isEmpty ? null : ifscCtrl.text,
+              );
+
+              if (mounted) {
+                Navigator.pop(context);
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(
+                    content: Text('Bank account added successfully'),
+                    backgroundColor: Colors.green,
+                  ),
+                );
+                ref.invalidate(paymentAccountsProvider);
+              }
+            },
+            child: const Text('Add'),
+          ),
+        ],
+      ),
+    );
+  }
+
   Future<void> _savePaymentIn(
     PaymentDao paymentDao,
     Company company,
-    User? user, {
-    bool saveAndNew = false,
-  }) async {
+    User? user,
+  ) async {
+    if (_isSaving) return;
+
     if (_selectedCustomer == null) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
@@ -760,65 +1015,47 @@ class _PaymentInFormScreenState extends ConsumerState<PaymentInFormScreen> {
             ))
         .toList();
 
+    setState(() => _isSaving = true);
+
     try {
+      PaymentIn? savedPayment;
+
       if (widget.paymentInId != null) {
-        await paymentDao.updatePaymentIn(
+        savedPayment = await paymentDao.updatePaymentIn(
           paymentInId: widget.paymentInId!,
           companyId: company.id,
           customer: _selectedCustomer!,
           receiptDate: _date,
           receiptNo: _receiptNoCtrl.text.trim(),
+          previousBalance: _previousBalance,
           lines: inputs,
           description:
               _descriptionCtrl.text.isEmpty ? null : _descriptionCtrl.text,
           attachmentPath: _selectedImagePath,
           userId: user?.id,
         );
-
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-              content: Text('Payment updated successfully'),
-              backgroundColor: Colors.green,
-            ),
-          );
-          Navigator.pop(context, true);
-        }
       } else {
-        await paymentDao.createPaymentIn(
+        savedPayment = await paymentDao.createPaymentIn(
           companyId: company.id,
           customer: _selectedCustomer!,
           receiptDate: _date,
           receiptNo: _receiptNoCtrl.text.trim(),
+          previousBalance: _previousBalance,
           lines: inputs,
           description:
               _descriptionCtrl.text.isEmpty ? null : _descriptionCtrl.text,
           attachmentPath: _selectedImagePath,
           userId: user?.id,
         );
+      }
 
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-              content: Text('Payment saved successfully'),
-              backgroundColor: Colors.green,
-            ),
-          );
-
-          if (saveAndNew) {
-            // Reset form for new payment
-            setState(() {
-              _selectedCustomer = null;
-              _paymentLines.clear();
-              _descriptionCtrl.clear();
-              _selectedImagePath = null;
-            });
-            await _generateSerialReceiptNo();
-            _addDefaultCashPayment();
-          } else {
-            Navigator.pop(context, true);
-          }
-        }
+      if (mounted && savedPayment != null) {
+        final savedLines = await paymentDao.getPaymentInLines(savedPayment.id);
+        await _showPostSaveActions(
+          company: company,
+          payment: savedPayment,
+          lines: savedLines,
+        );
       }
     } catch (e) {
       if (mounted) {
@@ -829,102 +1066,95 @@ class _PaymentInFormScreenState extends ConsumerState<PaymentInFormScreen> {
           ),
         );
       }
+    } finally {
+      if (mounted) {
+        setState(() => _isSaving = false);
+      }
     }
   }
 
-  Future<void> _saveAndSharePaymentIn(
-    PaymentDao paymentDao,
-    Company company,
-    User? user,
-  ) async {
-    if (_selectedCustomer == null) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Please select a customer'),
-          backgroundColor: Colors.red,
-        ),
-      );
-      return;
-    }
+  Future<void> _showPostSaveActions({
+    required Company company,
+    required PaymentIn payment,
+    required List<PaymentInLine> lines,
+  }) async {
+    if (!mounted || _selectedCustomer == null) return;
 
-    final validLines = _paymentLines
-        .where((l) => l.accountId != null && l.amount > 0)
-        .toList();
-
-    if (validLines.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Please add at least one payment'),
-          backgroundColor: Colors.red,
-        ),
-      );
-      return;
-    }
-
-    final inputs = validLines
-        .map((l) => PaymentLineInput(
-              accountId: l.accountId!,
-              amount: l.amount,
-              referenceNo: l.referenceNo,
-            ))
-        .toList();
-
-    try {
-      String receiptNo = _receiptNoCtrl.text.trim();
-
-      if (widget.paymentInId != null) {
-        await paymentDao.updatePaymentIn(
-          paymentInId: widget.paymentInId!,
-          companyId: company.id,
-          customer: _selectedCustomer!,
-          receiptDate: _date,
-          receiptNo: receiptNo,
-          lines: inputs,
-          description:
-              _descriptionCtrl.text.isEmpty ? null : _descriptionCtrl.text,
-          attachmentPath: _selectedImagePath,
-          userId: user?.id,
-        );
-      } else {
-        await paymentDao.createPaymentIn(
-          companyId: company.id,
-          customer: _selectedCustomer!,
-          receiptDate: _date,
-          receiptNo: receiptNo,
-          lines: inputs,
-          description:
-              _descriptionCtrl.text.isEmpty ? null : _descriptionCtrl.text,
-          attachmentPath: _selectedImagePath,
-          userId: user?.id,
-        );
-      }
-
-      if (mounted) {
-        // Get the saved payment by receipt number
-        final payments = await paymentDao.getPaymentIns(company.id);
-        final payment =
-            payments.where((p) => p.receiptNo == receiptNo).firstOrNull;
-
-        if (payment != null) {
-          await ReceiptGenerator.shareReceipt(
-            context: context,
-            company: company,
-            party: _selectedCustomer!,
-            payment: payment,
-            totalAmount: _totalReceived,
-            imagePath: _selectedImagePath,
-          );
-        }
-      }
-    } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Error: $e'),
-            backgroundColor: Colors.red,
+    await showModalBottomSheet<void>(
+      context: context,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (context) {
+        return SafeArea(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const SizedBox(height: 8),
+              const Text(
+                'Payment Saved',
+                style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
+              ),
+              const SizedBox(height: 8),
+              ListTile(
+                leading: const Icon(Icons.share, color: Colors.blue),
+                title: const Text('Share Receipt'),
+                onTap: () async {
+                  Navigator.pop(context);
+                  await ReceiptGenerator.shareReceipt(
+                    context: this.context,
+                    company: company,
+                    party: _selectedCustomer!,
+                    payment: payment,
+                    lines: lines,
+                    totalAmount: payment.totalAmount,
+                    imagePath: payment.attachmentPath,
+                  );
+                },
+              ),
+              ListTile(
+                leading: const Icon(Icons.print, color: Colors.deepPurple),
+                title: const Text('Print Receipt'),
+                onTap: () async {
+                  Navigator.pop(context);
+                  final pdfBytes = await ReceiptGenerator.generateReceiptPdf(
+                    company: company,
+                    party: _selectedCustomer!,
+                    payment: payment,
+                    lines: lines,
+                    totalAmount: payment.totalAmount,
+                    imagePath: payment.attachmentPath,
+                  );
+                  await Printing.layoutPdf(onLayout: (_) async => pdfBytes);
+                },
+              ),
+              ListTile(
+                leading:
+                    const Icon(Icons.add_circle_outline, color: Colors.orange),
+                title: const Text('New Payment-In'),
+                onTap: () {
+                  Navigator.pop(context);
+                  Navigator.pushReplacement(
+                    this.context,
+                    MaterialPageRoute(
+                      builder: (_) => const PaymentInFormScreen(),
+                    ),
+                  );
+                },
+              ),
+              ListTile(
+                leading: const Icon(Icons.list_alt, color: Colors.blueGrey),
+                title: const Text('Back to Payment List'),
+                onTap: () {
+                  Navigator.pop(context);
+                  Navigator.of(this.context).pop(true);
+                },
+              ),
+              const SizedBox(height: 8),
+            ],
           ),
         );
-      }
-    }
+      },
+    );
   }
 }

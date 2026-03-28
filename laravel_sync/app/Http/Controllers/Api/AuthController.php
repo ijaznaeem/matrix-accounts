@@ -212,6 +212,17 @@ class AuthController extends Controller
             ]);
         }
 
+        if ($user->role !== 'super_admin') {
+            $tenantRootId = $user->subscriber_id ?: $user->id;
+            $tenantRoot = User::find($tenantRootId);
+
+            if ($tenantRoot?->subscription_expires_at !== null && $tenantRoot->subscription_expires_at->isPast()) {
+                throw ValidationException::withMessages([
+                    'email' => ['Your subscription has expired. Contact Octavision support.'],
+                ]);
+            }
+        }
+
         $tokens = $this->issueTokenPair($user, $request->input('device_id'));
 
         return response()->json([

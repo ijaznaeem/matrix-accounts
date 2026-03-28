@@ -5,12 +5,14 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:intl/intl.dart';
+import 'package:isar/isar.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:pdf/pdf.dart';
 import 'package:pdf/widgets.dart' as pw;
 import 'package:share_plus/share_plus.dart';
 
 import '../../../core/config/providers.dart';
+import '../../../core/providers/settings_provider.dart';
 import '../../../data/models/account_models.dart';
 import '../../../data/models/party_model.dart';
 
@@ -100,6 +102,52 @@ class _PartyLedgerScreenState extends ConsumerState<PartyLedgerScreen> {
     }).toList();
   }
 
+  Future<List<AccountTransaction>> _getPartyLedgerTransactions(
+      int companyId) async {
+    final isar = ref.read(isarServiceProvider).isar;
+
+    final accountCode = (widget.party.partyType == PartyType.customer ||
+            widget.party.partyType == PartyType.both)
+        ? '1200'
+        : '2000';
+
+    final account = await isar.accounts
+        .filter()
+        .companyIdEqualTo(companyId)
+        .codeEqualTo(accountCode)
+        .findFirst();
+
+    if (account == null) return [];
+
+    return isar.accountTransactions
+        .filter()
+        .companyIdEqualTo(companyId)
+        .accountIdEqualTo(account.id)
+        .partyIdEqualTo(widget.party.id)
+        .sortByTransactionDateDesc()
+        .findAll();
+  }
+
+  double _calculatePartyBalance(List<AccountTransaction> transactions) {
+    return transactions.fold<double>(
+      0,
+      (sum, txn) => sum + txn.debit - txn.credit,
+    );
+  }
+
+  Map<int, double> _buildPartyRunningBalanceMap(
+      List<AccountTransaction> allTransactionsDesc) {
+    final balancesByTxnId = <int, double>{};
+    var runningBalance = _calculatePartyBalance(allTransactionsDesc);
+
+    for (final txn in allTransactionsDesc) {
+      balancesByTxnId[txn.id] = runningBalance;
+      runningBalance -= (txn.debit - txn.credit);
+    }
+
+    return balancesByTxnId;
+  }
+
   void _showSnackBar(String message, {bool isError = false}) {
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
@@ -110,16 +158,20 @@ class _PartyLedgerScreenState extends ConsumerState<PartyLedgerScreen> {
     );
   }
 
-  Future<void> _exportToPDF(List<AccountTransaction> transactions) async {
+  Future<void> _exportToPDF({
+    required List<AccountTransaction> transactions,
+    required Map<int, double> balancesByTxnId,
+    required double currentBalance,
+  }) async {
     try {
       _showSnackBar('Generating PDF...');
 
       final company = ref.read(currentCompanyProvider);
+      final settings = ref.read(settingsProvider);
+      final currencySymbol =
+          SettingsConstants.currencySymbols[settings.defaultCurrency] ??
+              settings.defaultCurrency;
       final pdf = pw.Document();
-
-      // Calculate balance
-      double totalBalance =
-          transactions.isNotEmpty ? transactions.first.runningBalance : 0;
 
       pdf.addPage(
         pw.Page(
@@ -153,7 +205,7 @@ class _PartyLedgerScreenState extends ConsumerState<PartyLedgerScreen> {
                   ),
                 ],
                 pw.Text(
-                  'Current Balance: ₹${totalBalance.toStringAsFixed(2)}',
+                  'Current Balance: $currencySymbol${currentBalance.toStringAsFixed(2)}',
                   style: pw.TextStyle(
                       fontSize: 14, fontWeight: pw.FontWeight.bold),
                 ),
@@ -243,7 +295,8 @@ class _PartyLedgerScreenState extends ConsumerState<PartyLedgerScreen> {
                             pw.Padding(
                               padding: const pw.EdgeInsets.all(8),
                               child: pw.Text(
-                                  txn.runningBalance.toStringAsFixed(2),
+                                  (balancesByTxnId[txn.id] ?? 0)
+                                      .toStringAsFixed(2),
                                   textAlign: pw.TextAlign.right),
                             ),
                           ],
@@ -276,7 +329,10 @@ class _PartyLedgerScreenState extends ConsumerState<PartyLedgerScreen> {
   @override
   Widget build(BuildContext context) {
     final company = ref.watch(currentCompanyProvider);
-    final accountDao = ref.watch(accountDaoProvider);
+    final settings = ref.watch(settingsProvider);
+    final currencySymbol =
+        SettingsConstants.currencySymbols[settings.defaultCurrency] ??
+            settings.defaultCurrency;
 
     if (company == null) {
       return Scaffold(
@@ -305,10 +361,7 @@ class _PartyLedgerScreenState extends ConsumerState<PartyLedgerScreen> {
         ],
       ),
       body: FutureBuilder<List<AccountTransaction>>(
-        future: accountDao.getCustomerLedger(
-          companyId: company.id,
-          customerId: widget.party.id,
-        ),
+        future: _getPartyLedgerTransactions(company.id),
         builder: (context, snapshot) {
           if (snapshot.connectionState == ConnectionState.waiting) {
             return const Center(child: CircularProgressIndicator());
@@ -320,22 +373,18 @@ class _PartyLedgerScreenState extends ConsumerState<PartyLedgerScreen> {
 
           final allTransactions = snapshot.data ?? [];
           final filteredTransactions = _filterTransactions(allTransactions);
+          final balancesByTxnId = _buildPartyRunningBalanceMap(allTransactions);
 
           if (allTransactions.isEmpty) {
             return _buildEmptyState();
           }
 
-          // Calculate total balance from original transactions
-          double totalBalance = 0;
-          for (var txn in allTransactions) {
-            totalBalance = txn.runningBalance;
-            break; // First transaction has current balance
-          }
+          final totalBalance = _calculatePartyBalance(allTransactions);
 
           return Column(
             children: [
               _buildFilterHeader(),
-              _buildBalanceCard(totalBalance),
+              _buildBalanceCard(totalBalance, currencySymbol),
               if (filteredTransactions.isEmpty && _selectedFilter != 'All Time')
                 Expanded(
                   child: Center(
@@ -360,7 +409,11 @@ class _PartyLedgerScreenState extends ConsumerState<PartyLedgerScreen> {
                     itemCount: filteredTransactions.length,
                     itemBuilder: (context, index) {
                       final txn = filteredTransactions[index];
-                      return _buildTransactionCard(txn);
+                      return _buildTransactionCard(
+                        txn,
+                        currencySymbol,
+                        balancesByTxnId[txn.id] ?? 0,
+                      );
                     },
                   ),
                 ),
@@ -388,15 +441,21 @@ class _PartyLedgerScreenState extends ConsumerState<PartyLedgerScreen> {
           ),
           ElevatedButton.icon(
             onPressed: () async {
-              final accountDao = ref.read(accountDaoProvider);
               final company = ref.read(currentCompanyProvider);
               if (company != null) {
-                final transactions = await accountDao.getCustomerLedger(
-                  companyId: company.id,
-                  customerId: widget.party.id,
+                final allTransactions =
+                    await _getPartyLedgerTransactions(company.id);
+                final filteredTransactions =
+                    _filterTransactions(allTransactions);
+                final balancesByTxnId =
+                    _buildPartyRunningBalanceMap(allTransactions);
+                final currentBalance = _calculatePartyBalance(allTransactions);
+
+                await _exportToPDF(
+                  transactions: filteredTransactions,
+                  balancesByTxnId: balancesByTxnId,
+                  currentBalance: currentBalance,
                 );
-                final filteredTransactions = _filterTransactions(transactions);
-                await _exportToPDF(filteredTransactions);
               }
             },
             icon: const Icon(Icons.picture_as_pdf, size: 18),
@@ -412,7 +471,7 @@ class _PartyLedgerScreenState extends ConsumerState<PartyLedgerScreen> {
     );
   }
 
-  Widget _buildBalanceCard(double balance) {
+  Widget _buildBalanceCard(double balance, String currencySymbol) {
     final isReceivable = balance > 0;
     final isPayable = balance < 0;
 
@@ -422,9 +481,9 @@ class _PartyLedgerScreenState extends ConsumerState<PartyLedgerScreen> {
       decoration: BoxDecoration(
         gradient: LinearGradient(
           colors: isReceivable
-              ? [Colors.green.shade600, Colors.green.shade700]
+              ? [Colors.red.shade600, Colors.red.shade700]
               : isPayable
-                  ? [Colors.red.shade600, Colors.red.shade700]
+                  ? [Colors.green.shade600, Colors.green.shade700]
                   : [Colors.grey.shade600, Colors.grey.shade700],
           begin: Alignment.topLeft,
           end: Alignment.bottomRight,
@@ -433,9 +492,9 @@ class _PartyLedgerScreenState extends ConsumerState<PartyLedgerScreen> {
         boxShadow: [
           BoxShadow(
             color: (isReceivable
-                    ? Colors.green
+                    ? Colors.red
                     : isPayable
-                        ? Colors.red
+                        ? Colors.green
                         : Colors.grey)
                 .withOpacity(0.3),
             blurRadius: 8,
@@ -469,7 +528,7 @@ class _PartyLedgerScreenState extends ConsumerState<PartyLedgerScreen> {
           ),
           const SizedBox(height: 8),
           Text(
-            '₹${balance.abs().toStringAsFixed(2)}',
+            '$currencySymbol${balance.abs().toStringAsFixed(2)}',
             style: const TextStyle(
               color: Colors.white,
               fontSize: 32,
@@ -479,10 +538,10 @@ class _PartyLedgerScreenState extends ConsumerState<PartyLedgerScreen> {
           const SizedBox(height: 4),
           Text(
             isReceivable
-                ? 'To Receive'
+                ? 'RECEIVABLE'
                 : isPayable
-                    ? 'To Pay'
-                    : 'Settled',
+                    ? 'CREDIT'
+                    : 'CLEARED',
             style: const TextStyle(
               color: Colors.white70,
               fontSize: 12,
@@ -493,7 +552,11 @@ class _PartyLedgerScreenState extends ConsumerState<PartyLedgerScreen> {
     );
   }
 
-  Widget _buildTransactionCard(AccountTransaction txn) {
+  Widget _buildTransactionCard(
+    AccountTransaction txn,
+    String currencySymbol,
+    double runningBalance,
+  ) {
     final dateFormat = DateFormat('dd MMM yyyy, hh:mm a');
     final isDebit = txn.debit > 0;
 
@@ -545,7 +608,7 @@ class _PartyLedgerScreenState extends ConsumerState<PartyLedgerScreen> {
                   crossAxisAlignment: CrossAxisAlignment.end,
                   children: [
                     Text(
-                      '${isDebit ? '+' : '-'}₹${(isDebit ? txn.debit : txn.credit).toStringAsFixed(2)}',
+                      '${isDebit ? '+' : '-'}$currencySymbol${(isDebit ? txn.debit : txn.credit).toStringAsFixed(2)}',
                       style: TextStyle(
                         fontSize: 18,
                         fontWeight: FontWeight.bold,
@@ -556,7 +619,7 @@ class _PartyLedgerScreenState extends ConsumerState<PartyLedgerScreen> {
                     ),
                     const SizedBox(height: 4),
                     Text(
-                      'Balance: ₹${txn.runningBalance.toStringAsFixed(2)}',
+                      'Balance: $currencySymbol${runningBalance.toStringAsFixed(2)}',
                       style: TextStyle(
                         fontSize: 11,
                         color: Colors.grey.shade600,

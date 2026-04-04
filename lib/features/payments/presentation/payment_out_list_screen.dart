@@ -668,6 +668,11 @@ class _PaymentOutCard extends ConsumerWidget {
       return;
     }
 
+    final settings = ref.read(settingsProvider);
+    final currencySymbol =
+        SettingsConstants.currencySymbols[settings.defaultCurrency] ??
+            settings.defaultCurrency;
+
     await PaymentOutReceiptGenerator.shareReceipt(
       context: context,
       company: company,
@@ -675,6 +680,7 @@ class _PaymentOutCard extends ConsumerWidget {
       payment: payment,
       lines: lines,
       totalAmount: payment.totalAmount,
+      currencySymbol: currencySymbol,
       imagePath: payment.attachmentPath,
     );
   }
@@ -692,6 +698,11 @@ class _PaymentOutCard extends ConsumerWidget {
     }
 
     try {
+      final settings = ref.read(settingsProvider);
+      final currencySymbol =
+          SettingsConstants.currencySymbols[settings.defaultCurrency] ??
+              settings.defaultCurrency;
+
       final Uint8List pdfBytes =
           await PaymentOutReceiptGenerator.generateReceiptPdf(
         company: company,
@@ -699,6 +710,7 @@ class _PaymentOutCard extends ConsumerWidget {
         payment: payment,
         lines: lines,
         totalAmount: payment.totalAmount,
+        currencySymbol: currencySymbol,
         imagePath: payment.attachmentPath,
       );
 

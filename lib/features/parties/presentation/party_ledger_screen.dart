@@ -160,7 +160,7 @@ class _PartyLedgerScreenState extends ConsumerState<PartyLedgerScreen> {
 
   Future<void> _exportToPDF({
     required List<AccountTransaction> transactions,
-    required Map<int, double> balancesByTxnId,
+    required List<AccountTransaction> allTransactions,
     required double currentBalance,
   }) async {
     try {
@@ -171,159 +171,432 @@ class _PartyLedgerScreenState extends ConsumerState<PartyLedgerScreen> {
       final currencySymbol =
           SettingsConstants.currencySymbols[settings.defaultCurrency] ??
               settings.defaultCurrency;
+
+      final party = widget.party;
+      final partyTypeLabel = party.partyType == PartyType.customer
+          ? 'Customer'
+          : party.partyType == PartyType.supplier
+              ? 'Supplier'
+              : 'Customer / Supplier';
+
+      // Sort filtered transactions oldest → newest for ledger display
+      final sortedTxns = [...transactions]
+        ..sort((a, b) => a.transactionDate.compareTo(b.transactionDate));
+
+      // Opening balance = sum of all transactions strictly before the filter start
+      double openingBalance = 0;
+      if (_startDate != null) {
+        final beforePeriod = allTransactions
+            .where((t) => t.transactionDate.isBefore(_startDate!))
+            .toList();
+        openingBalance =
+            beforePeriod.fold(0.0, (s, t) => s + t.debit - t.credit);
+      }
+
+      // Build per-row running balance starting from openingBalance
+      double runBalance = openingBalance;
+      final runningBalanceMap = <int, double>{};
+      for (final txn in sortedTxns) {
+        runBalance += txn.debit - txn.credit;
+        runningBalanceMap[txn.id] = runBalance;
+      }
+
+      // Period label
+      String periodText = _selectedFilter;
+      if (_startDate != null && _endDate != null) {
+        periodText +=
+            ' (${_dateFormat.format(_startDate!)} – ${_dateFormat.format(_endDate!)})';
+      }
+
+      // Number helpers
+      final numFmt = NumberFormat('#,##0.00');
+      String fmt(double v) => numFmt.format(v);
+      String fmtC(double v) => '$currencySymbol ${fmt(v)}';
+
+      // Colour palette
+      const headerBg = PdfColor(0.102, 0.137, 0.494); // indigo 900
+      const subHeaderBg = PdfColor(0.910, 0.918, 0.965); // indigo 50
+      const altRowBg = PdfColor(0.980, 0.980, 0.980); // grey 50
+      const borderColor = PdfColor(0.741, 0.741, 0.741); // grey 400
+      const debitGreen = PdfColor(0.106, 0.369, 0.125); // green 900
+      const creditRed = PdfColor(0.718, 0.110, 0.110); // red 900
+      const balanceRedBg = PdfColor(1.0, 0.922, 0.933);
+      const balanceGreenBg = PdfColor(0.910, 0.969, 0.914);
+
+      // Column proportions: Date | Description | Debit | Credit | Balance
+      const colWidths = {
+        0: pw.FlexColumnWidth(1.6),
+        1: pw.FlexColumnWidth(3.2),
+        2: pw.FlexColumnWidth(1.5),
+        3: pw.FlexColumnWidth(1.5),
+        4: pw.FlexColumnWidth(1.8),
+      };
+
+      pw.Widget hdr(String t, {pw.TextAlign a = pw.TextAlign.left}) =>
+          pw.Padding(
+            padding: const pw.EdgeInsets.symmetric(horizontal: 6, vertical: 7),
+            child: pw.Text(
+              t,
+              style: pw.TextStyle(
+                color: PdfColors.white,
+                fontWeight: pw.FontWeight.bold,
+                fontSize: 9,
+              ),
+              textAlign: a,
+            ),
+          );
+
+      pw.Widget cell(String t,
+              {pw.TextAlign a = pw.TextAlign.left,
+              pw.TextStyle? style,
+              double fs = 9}) =>
+          pw.Padding(
+            padding: const pw.EdgeInsets.symmetric(horizontal: 6, vertical: 6),
+            child: pw.Text(
+              t,
+              style:
+                  style ?? pw.TextStyle(fontSize: fs, color: PdfColors.black),
+              textAlign: a,
+            ),
+          );
+
+      // Sub-totals for footer row
+      final totalDebit = sortedTxns.fold(0.0, (s, t) => s + t.debit);
+      final totalCredit = sortedTxns.fold(0.0, (s, t) => s + t.credit);
+
       final pdf = pw.Document();
 
       pdf.addPage(
-        pw.Page(
+        pw.MultiPage(
           pageFormat: PdfPageFormat.a4,
-          build: (pw.Context context) {
+          margin: const pw.EdgeInsets.all(28),
+          header: (pw.Context ctx) {
             return pw.Column(
               crossAxisAlignment: pw.CrossAxisAlignment.start,
               children: [
-                // Header
-                pw.Text(
-                  'PARTY LEDGER',
-                  style: pw.TextStyle(
-                    fontSize: 24,
-                    fontWeight: pw.FontWeight.bold,
+                // ── Top bar: title + company ──────────────────────────────
+                pw.Container(
+                  padding: const pw.EdgeInsets.symmetric(
+                      horizontal: 16, vertical: 12),
+                  decoration: const pw.BoxDecoration(
+                    color: headerBg,
+                    borderRadius: pw.BorderRadius.all(pw.Radius.circular(4)),
                   ),
-                ),
-                pw.SizedBox(height: 10),
-                pw.Text(
-                  'Company: ${company?.name ?? 'Company'}',
-                  style: const pw.TextStyle(fontSize: 14),
-                ),
-                pw.Text(
-                  'Party: ${widget.party.name}',
-                  style: pw.TextStyle(
-                      fontSize: 16, fontWeight: pw.FontWeight.bold),
-                ),
-                if (_selectedFilter != 'All Time') ...[
-                  pw.Text(
-                    'Period: $_selectedFilter${_startDate != null ? ' (${_dateFormat.format(_startDate!)} - ${_dateFormat.format(_endDate!)})' : ''}',
-                    style: const pw.TextStyle(fontSize: 12),
-                  ),
-                ],
-                pw.Text(
-                  'Current Balance: $currencySymbol${currentBalance.toStringAsFixed(2)}',
-                  style: pw.TextStyle(
-                      fontSize: 14, fontWeight: pw.FontWeight.bold),
-                ),
-                pw.SizedBox(height: 20),
-
-                // Transactions Table
-                if (transactions.isNotEmpty) ...[
-                  pw.Table(
-                    border: pw.TableBorder.all(),
-                    columnWidths: {
-                      0: const pw.FlexColumnWidth(2),
-                      1: const pw.FlexColumnWidth(1.5),
-                      2: const pw.FlexColumnWidth(1),
-                      3: const pw.FlexColumnWidth(1),
-                      4: const pw.FlexColumnWidth(1),
-                    },
+                  child: pw.Row(
+                    mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
                     children: [
-                      // Header
-                      pw.TableRow(
-                        decoration:
-                            const pw.BoxDecoration(color: PdfColors.grey300),
+                      pw.Column(
+                        crossAxisAlignment: pw.CrossAxisAlignment.start,
                         children: [
-                          pw.Padding(
-                            padding: const pw.EdgeInsets.all(8),
-                            child: pw.Text('Description',
-                                style: pw.TextStyle(
-                                    fontWeight: pw.FontWeight.bold)),
+                          pw.Text(
+                            'PARTY LEDGER',
+                            style: pw.TextStyle(
+                              color: PdfColors.white,
+                              fontSize: 18,
+                              fontWeight: pw.FontWeight.bold,
+                              letterSpacing: 1.5,
+                            ),
                           ),
-                          pw.Padding(
-                            padding: const pw.EdgeInsets.all(8),
-                            child: pw.Text('Date',
-                                style: pw.TextStyle(
-                                    fontWeight: pw.FontWeight.bold)),
-                          ),
-                          pw.Padding(
-                            padding: const pw.EdgeInsets.all(8),
-                            child: pw.Text('Debit',
-                                style: pw.TextStyle(
-                                    fontWeight: pw.FontWeight.bold),
-                                textAlign: pw.TextAlign.right),
-                          ),
-                          pw.Padding(
-                            padding: const pw.EdgeInsets.all(8),
-                            child: pw.Text('Credit',
-                                style: pw.TextStyle(
-                                    fontWeight: pw.FontWeight.bold),
-                                textAlign: pw.TextAlign.right),
-                          ),
-                          pw.Padding(
-                            padding: const pw.EdgeInsets.all(8),
-                            child: pw.Text('Balance',
-                                style: pw.TextStyle(
-                                    fontWeight: pw.FontWeight.bold),
-                                textAlign: pw.TextAlign.right),
+                          pw.SizedBox(height: 3),
+                          pw.Text(
+                            company?.name ?? '',
+                            style: const pw.TextStyle(
+                                color: PdfColors.grey300, fontSize: 10),
                           ),
                         ],
                       ),
-                      // Data rows
-                      ...transactions.map((txn) {
-                        return pw.TableRow(
-                          children: [
-                            pw.Padding(
-                              padding: const pw.EdgeInsets.all(8),
-                              child: pw.Text(txn.description ?? ''),
+                      pw.Column(
+                        crossAxisAlignment: pw.CrossAxisAlignment.end,
+                        children: [
+                          pw.Text(
+                            'Period: $periodText',
+                            style: const pw.TextStyle(
+                                color: PdfColors.grey300, fontSize: 9),
+                          ),
+                          pw.SizedBox(height: 3),
+                          pw.Text(
+                            'Generated: ${_dateFormat.format(DateTime.now())}',
+                            style: const pw.TextStyle(
+                                color: PdfColors.grey300, fontSize: 9),
+                          ),
+                          if (ctx.pageNumber > 1)
+                            pw.Text(
+                              'Page ${ctx.pageNumber}',
+                              style: const pw.TextStyle(
+                                  color: PdfColors.grey300, fontSize: 9),
                             ),
-                            pw.Padding(
-                              padding: const pw.EdgeInsets.all(8),
-                              child: pw.Text(
-                                  _dateFormat.format(txn.transactionDate)),
-                            ),
-                            pw.Padding(
-                              padding: const pw.EdgeInsets.all(8),
-                              child: pw.Text(
-                                  txn.debit > 0
-                                      ? txn.debit.toStringAsFixed(2)
-                                      : '',
-                                  textAlign: pw.TextAlign.right),
-                            ),
-                            pw.Padding(
-                              padding: const pw.EdgeInsets.all(8),
-                              child: pw.Text(
-                                  txn.credit > 0
-                                      ? txn.credit.toStringAsFixed(2)
-                                      : '',
-                                  textAlign: pw.TextAlign.right),
-                            ),
-                            pw.Padding(
-                              padding: const pw.EdgeInsets.all(8),
-                              child: pw.Text(
-                                  (balancesByTxnId[txn.id] ?? 0)
-                                      .toStringAsFixed(2),
-                                  textAlign: pw.TextAlign.right),
-                            ),
-                          ],
-                        );
-                      }).toList(),
+                        ],
+                      ),
                     ],
                   ),
-                ] else ...[
-                  pw.Text('No transactions found for the selected period.'),
-                ],
+                ),
+                pw.SizedBox(height: 8),
+                // ── Party details card ────────────────────────────────────
+                pw.Container(
+                  padding: const pw.EdgeInsets.all(12),
+                  decoration: pw.BoxDecoration(
+                    border: pw.Border.all(color: borderColor),
+                    borderRadius:
+                        const pw.BorderRadius.all(pw.Radius.circular(4)),
+                    color: subHeaderBg,
+                  ),
+                  child: pw.Row(
+                    crossAxisAlignment: pw.CrossAxisAlignment.start,
+                    children: [
+                      // Left: party info
+                      pw.Expanded(
+                        child: pw.Column(
+                          crossAxisAlignment: pw.CrossAxisAlignment.start,
+                          children: [
+                            pw.Text(
+                              party.name,
+                              style: pw.TextStyle(
+                                fontSize: 13,
+                                fontWeight: pw.FontWeight.bold,
+                              ),
+                            ),
+                            pw.SizedBox(height: 3),
+                            pw.Text(
+                              partyTypeLabel,
+                              style: const pw.TextStyle(
+                                  fontSize: 9, color: PdfColors.grey700),
+                            ),
+                            if (party.phone != null &&
+                                party.phone!.isNotEmpty) ...[
+                              pw.SizedBox(height: 2),
+                              pw.Text('Phone: ${party.phone}',
+                                  style: const pw.TextStyle(fontSize: 9)),
+                            ],
+                            if (party.email != null &&
+                                party.email!.isNotEmpty) ...[
+                              pw.SizedBox(height: 2),
+                              pw.Text('Email: ${party.email}',
+                                  style: const pw.TextStyle(fontSize: 9)),
+                            ],
+                            if (party.address != null &&
+                                party.address!.isNotEmpty) ...[
+                              pw.SizedBox(height: 2),
+                              pw.Text('Address: ${party.address}',
+                                  style: const pw.TextStyle(fontSize: 9)),
+                            ],
+                          ],
+                        ),
+                      ),
+                      pw.SizedBox(width: 16),
+                      // Right: balance box
+                      pw.Container(
+                        padding: const pw.EdgeInsets.symmetric(
+                            horizontal: 14, vertical: 10),
+                        decoration: pw.BoxDecoration(
+                          color: currentBalance > 0
+                              ? balanceRedBg
+                              : currentBalance < 0
+                                  ? balanceGreenBg
+                                  : altRowBg,
+                          border: pw.Border.all(
+                            color: currentBalance > 0
+                                ? const PdfColor(0.937, 0.604, 0.604)
+                                : currentBalance < 0
+                                    ? const PdfColor(0.647, 0.839, 0.655)
+                                    : borderColor,
+                          ),
+                          borderRadius:
+                              const pw.BorderRadius.all(pw.Radius.circular(4)),
+                        ),
+                        child: pw.Column(
+                          crossAxisAlignment: pw.CrossAxisAlignment.center,
+                          children: [
+                            pw.Text(
+                              'Current Balance',
+                              style: const pw.TextStyle(
+                                  fontSize: 8, color: PdfColors.grey700),
+                            ),
+                            pw.SizedBox(height: 4),
+                            pw.Text(
+                              fmtC(currentBalance.abs()),
+                              style: pw.TextStyle(
+                                fontSize: 13,
+                                fontWeight: pw.FontWeight.bold,
+                                color: currentBalance > 0
+                                    ? creditRed
+                                    : currentBalance < 0
+                                        ? debitGreen
+                                        : PdfColors.grey700,
+                              ),
+                            ),
+                            pw.SizedBox(height: 2),
+                            pw.Text(
+                              currentBalance > 0
+                                  ? 'RECEIVABLE'
+                                  : currentBalance < 0
+                                      ? 'CREDIT'
+                                      : 'CLEARED',
+                              style: pw.TextStyle(
+                                fontSize: 8,
+                                fontWeight: pw.FontWeight.bold,
+                                color: currentBalance > 0
+                                    ? creditRed
+                                    : currentBalance < 0
+                                        ? debitGreen
+                                        : PdfColors.grey700,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                pw.SizedBox(height: 10),
               ],
             );
+          },
+          build: (pw.Context ctx) {
+            if (sortedTxns.isEmpty) {
+              return [
+                pw.Padding(
+                  padding: const pw.EdgeInsets.all(24),
+                  child: pw.Text(
+                    'No transactions found for the selected period.',
+                    style: const pw.TextStyle(color: PdfColors.grey600),
+                  ),
+                ),
+              ];
+            }
+
+            return [
+              pw.Table(
+                border: pw.TableBorder.all(color: borderColor, width: 0.5),
+                columnWidths: colWidths,
+                children: [
+                  // ── Column header row ─────────────────────────────────
+                  pw.TableRow(
+                    decoration: const pw.BoxDecoration(color: headerBg),
+                    children: [
+                      hdr('Date'),
+                      hdr('Description'),
+                      hdr('Debit', a: pw.TextAlign.right),
+                      hdr('Credit', a: pw.TextAlign.right),
+                      hdr('Balance', a: pw.TextAlign.right),
+                    ],
+                  ),
+                  // ── Opening balance row (only when period is filtered) ─
+                  if (_startDate != null)
+                    pw.TableRow(
+                      decoration: const pw.BoxDecoration(color: subHeaderBg),
+                      children: [
+                        cell(''),
+                        cell('Opening Balance',
+                            style: pw.TextStyle(
+                                fontWeight: pw.FontWeight.bold, fontSize: 9)),
+                        cell('', a: pw.TextAlign.right),
+                        cell('', a: pw.TextAlign.right),
+                        cell(fmtC(openingBalance),
+                            a: pw.TextAlign.right,
+                            style: pw.TextStyle(
+                                fontWeight: pw.FontWeight.bold, fontSize: 9)),
+                      ],
+                    ),
+                  // ── Data rows ─────────────────────────────────────────
+                  ...sortedTxns.asMap().entries.map((entry) {
+                    final i = entry.key;
+                    final txn = entry.value;
+                    final balance = runningBalanceMap[txn.id] ?? 0;
+                    return pw.TableRow(
+                      decoration: pw.BoxDecoration(
+                          color: i % 2 == 1 ? altRowBg : PdfColors.white),
+                      children: [
+                        cell(_dateFormat.format(txn.transactionDate)),
+                        cell(_buildLedgerDescription(txn)),
+                        cell(
+                          txn.debit > 0 ? fmt(txn.debit) : '',
+                          a: pw.TextAlign.right,
+                          style: pw.TextStyle(fontSize: 9, color: debitGreen),
+                        ),
+                        cell(
+                          txn.credit > 0 ? fmt(txn.credit) : '',
+                          a: pw.TextAlign.right,
+                          style: pw.TextStyle(fontSize: 9, color: creditRed),
+                        ),
+                        cell(
+                          fmtC(balance),
+                          a: pw.TextAlign.right,
+                          style: pw.TextStyle(
+                            fontSize: 9,
+                            fontWeight: pw.FontWeight.bold,
+                            color: balance > 0
+                                ? creditRed
+                                : balance < 0
+                                    ? debitGreen
+                                    : PdfColors.grey700,
+                          ),
+                        ),
+                      ],
+                    );
+                  }),
+                  // ── Totals row ────────────────────────────────────────
+                  pw.TableRow(
+                    decoration: const pw.BoxDecoration(color: subHeaderBg),
+                    children: [
+                      cell(''),
+                      cell('TOTAL',
+                          style: pw.TextStyle(
+                              fontWeight: pw.FontWeight.bold, fontSize: 9)),
+                      cell(fmt(totalDebit),
+                          a: pw.TextAlign.right,
+                          style: pw.TextStyle(
+                              fontWeight: pw.FontWeight.bold,
+                              fontSize: 9,
+                              color: debitGreen)),
+                      cell(fmt(totalCredit),
+                          a: pw.TextAlign.right,
+                          style: pw.TextStyle(
+                              fontWeight: pw.FontWeight.bold,
+                              fontSize: 9,
+                              color: creditRed)),
+                      cell(fmtC(runBalance),
+                          a: pw.TextAlign.right,
+                          style: pw.TextStyle(
+                              fontWeight: pw.FontWeight.bold,
+                              fontSize: 9,
+                              color: runBalance > 0
+                                  ? creditRed
+                                  : runBalance < 0
+                                      ? debitGreen
+                                      : PdfColors.grey700)),
+                    ],
+                  ),
+                ],
+              ),
+            ];
           },
         ),
       );
 
       final tempDir = await getTemporaryDirectory();
-      final file = File(
-          '${tempDir.path}/ledger_${widget.party.name.replaceAll(' ', '_')}.pdf');
+      final file =
+          File('${tempDir.path}/ledger_${party.name.replaceAll(' ', '_')}.pdf');
       await file.writeAsBytes(await pdf.save());
 
       await Share.shareXFiles([XFile(file.path)],
-          subject: '${widget.party.name} - Ledger Report');
+          subject: '${party.name} - Ledger Report');
       _showSnackBar('Ledger exported successfully');
     } catch (e) {
       _showSnackBar('Error exporting ledger: $e', isError: true);
     }
+  }
+
+  String _buildLedgerDescription(AccountTransaction txn) {
+    final parts = <String>[];
+    if (txn.description != null && txn.description!.isNotEmpty) {
+      parts.add(txn.description!);
+    } else {
+      parts.add(_getTransactionTypeLabel(txn.transactionType));
+    }
+    if (txn.referenceNo != null && txn.referenceNo!.isNotEmpty) {
+      parts.add('Ref: ${txn.referenceNo}');
+    }
+    return parts.join('\n');
   }
 
   @override
@@ -447,13 +720,11 @@ class _PartyLedgerScreenState extends ConsumerState<PartyLedgerScreen> {
                     await _getPartyLedgerTransactions(company.id);
                 final filteredTransactions =
                     _filterTransactions(allTransactions);
-                final balancesByTxnId =
-                    _buildPartyRunningBalanceMap(allTransactions);
                 final currentBalance = _calculatePartyBalance(allTransactions);
 
                 await _exportToPDF(
                   transactions: filteredTransactions,
-                  balancesByTxnId: balancesByTxnId,
+                  allTransactions: allTransactions,
                   currentBalance: currentBalance,
                 );
               }

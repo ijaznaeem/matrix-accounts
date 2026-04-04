@@ -18,20 +18,6 @@ class ReceiptGenerator {
   static final _dateFormat = DateFormat('dd MMM, yyyy');
   static final _currencyFormat = NumberFormat('#,##,##0.00');
 
-  static String _currencySymbol(Company company) {
-    const symbols = {
-      'PKR': '₨',
-      'USD': r'$',
-      'EUR': '€',
-      'GBP': '£',
-      'INR': '₹',
-      'SAR': 'ر.س',
-      'AED': 'د.إ',
-    };
-    final currency = company.primaryCurrency ?? 'PKR';
-    return symbols[currency] ?? currency;
-  }
-
   // Generate receipt as image
   static Future<Uint8List> generateReceiptImage({
     required Company company,
@@ -39,9 +25,9 @@ class ReceiptGenerator {
     required PaymentIn payment,
     required List<PaymentInLine> lines,
     required double totalAmount,
+    required String currencySymbol,
     String? imagePath,
   }) async {
-    final currencySymbol = _currencySymbol(company);
     final recorder = ui.PictureRecorder();
     final canvas = Canvas(recorder);
     const size = Size(800, 1200);
@@ -271,9 +257,9 @@ class ReceiptGenerator {
     required PaymentIn payment,
     required List<PaymentInLine> lines,
     required double totalAmount,
+    required String currencySymbol,
     String? imagePath,
   }) async {
-    final currencySymbol = _currencySymbol(company);
     final pdf = pw.Document();
     final isar = Isar.getInstance();
 
@@ -538,6 +524,7 @@ class ReceiptGenerator {
     required PaymentIn payment,
     required List<PaymentInLine> lines,
     required double totalAmount,
+    required String currencySymbol,
     String? imagePath,
   }) async {
     showModalBottomSheet(
@@ -561,8 +548,8 @@ class ReceiptGenerator {
                 title: const Text('Share as Image'),
                 onTap: () async {
                   Navigator.pop(context);
-                  await _shareAsImage(
-                      company, party, payment, lines, totalAmount, imagePath);
+                  await _shareAsImage(company, party, payment, lines,
+                      totalAmount, currencySymbol, imagePath);
                 },
               ),
               ListTile(
@@ -570,8 +557,8 @@ class ReceiptGenerator {
                 title: const Text('Share as PDF'),
                 onTap: () async {
                   Navigator.pop(context);
-                  await _shareAsPdf(
-                      company, party, payment, lines, totalAmount, imagePath);
+                  await _shareAsPdf(company, party, payment, lines, totalAmount,
+                      currencySymbol, imagePath);
                 },
               ),
             ],
@@ -587,6 +574,7 @@ class ReceiptGenerator {
     PaymentIn payment,
     List<PaymentInLine> lines,
     double totalAmount,
+    String currencySymbol,
     String? imagePath,
   ) async {
     try {
@@ -596,6 +584,7 @@ class ReceiptGenerator {
         payment: payment,
         lines: lines,
         totalAmount: totalAmount,
+        currencySymbol: currencySymbol,
         imagePath: imagePath,
       );
 
@@ -618,6 +607,7 @@ class ReceiptGenerator {
     PaymentIn payment,
     List<PaymentInLine> lines,
     double totalAmount,
+    String currencySymbol,
     String? imagePath,
   ) async {
     try {
@@ -627,6 +617,7 @@ class ReceiptGenerator {
         payment: payment,
         lines: lines,
         totalAmount: totalAmount,
+        currencySymbol: currencySymbol,
         imagePath: imagePath,
       );
 

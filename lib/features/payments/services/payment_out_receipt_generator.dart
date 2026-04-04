@@ -18,20 +18,6 @@ class PaymentOutReceiptGenerator {
   static final _dateFormat = DateFormat('dd MMM, yyyy');
   static final _currencyFormat = NumberFormat('#,##,##0.00');
 
-  static String _currencySymbol(Company company) {
-    const symbols = {
-      'PKR': '₨',
-      'USD': r'$',
-      'EUR': '€',
-      'GBP': '£',
-      'INR': '₹',
-      'SAR': 'ر.س',
-      'AED': 'د.إ',
-    };
-    final currency = company.primaryCurrency ?? 'PKR';
-    return symbols[currency] ?? currency;
-  }
-
   // Generate receipt as image
   static Future<Uint8List> generateReceiptImage({
     required Company company,
@@ -39,9 +25,9 @@ class PaymentOutReceiptGenerator {
     required PaymentOut payment,
     required List<PaymentOutLine> lines,
     required double totalAmount,
+    required String currencySymbol,
     String? imagePath,
   }) async {
-    final currencySymbol = _currencySymbol(company);
     final recorder = ui.PictureRecorder();
     final canvas = Canvas(recorder);
     const size = Size(800, 1200);
@@ -265,9 +251,9 @@ class PaymentOutReceiptGenerator {
     required PaymentOut payment,
     required List<PaymentOutLine> lines,
     required double totalAmount,
+    required String currencySymbol,
     String? imagePath,
   }) async {
-    final currencySymbol = _currencySymbol(company);
     final pdf = pw.Document();
     final isar = Isar.getInstance();
 
@@ -537,6 +523,7 @@ class PaymentOutReceiptGenerator {
     required PaymentOut payment,
     required List<PaymentOutLine> lines,
     required double totalAmount,
+    required String currencySymbol,
     String? imagePath,
   }) async {
     showModalBottomSheet(
@@ -561,7 +548,7 @@ class PaymentOutReceiptGenerator {
                 onTap: () async {
                   Navigator.pop(context);
                   await _shareAsImage(company, supplier, payment, lines,
-                      totalAmount, imagePath);
+                      totalAmount, currencySymbol, imagePath);
                 },
               ),
               ListTile(
@@ -570,7 +557,7 @@ class PaymentOutReceiptGenerator {
                 onTap: () async {
                   Navigator.pop(context);
                   await _shareAsPdf(company, supplier, payment, lines,
-                      totalAmount, imagePath);
+                      totalAmount, currencySymbol, imagePath);
                 },
               ),
             ],
@@ -586,6 +573,7 @@ class PaymentOutReceiptGenerator {
     PaymentOut payment,
     List<PaymentOutLine> lines,
     double totalAmount,
+    String currencySymbol,
     String? imagePath,
   ) async {
     try {
@@ -595,6 +583,7 @@ class PaymentOutReceiptGenerator {
         payment: payment,
         lines: lines,
         totalAmount: totalAmount,
+        currencySymbol: currencySymbol,
         imagePath: imagePath,
       );
 
@@ -617,6 +606,7 @@ class PaymentOutReceiptGenerator {
     PaymentOut payment,
     List<PaymentOutLine> lines,
     double totalAmount,
+    String currencySymbol,
     String? imagePath,
   ) async {
     try {
@@ -626,6 +616,7 @@ class PaymentOutReceiptGenerator {
         payment: payment,
         lines: lines,
         totalAmount: totalAmount,
+        currencySymbol: currencySymbol,
         imagePath: imagePath,
       );
 

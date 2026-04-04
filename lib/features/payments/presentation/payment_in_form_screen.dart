@@ -1108,6 +1108,7 @@ class _PaymentInFormScreenState extends ConsumerState<PaymentInFormScreen> {
                     payment: payment,
                     lines: lines,
                     totalAmount: payment.totalAmount,
+                    currencySymbol: _currencySymbol,
                     imagePath: payment.attachmentPath,
                   );
                 },
@@ -1123,6 +1124,7 @@ class _PaymentInFormScreenState extends ConsumerState<PaymentInFormScreen> {
                     payment: payment,
                     lines: lines,
                     totalAmount: payment.totalAmount,
+                    currencySymbol: _currencySymbol,
                     imagePath: payment.attachmentPath,
                   );
                   await Printing.layoutPdf(onLayout: (_) async => pdfBytes);

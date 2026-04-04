@@ -6,7 +6,9 @@ import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:image_picker/image_picker.dart';
+import 'package:path_provider/path_provider.dart';
 import 'package:printing/printing.dart';
+import 'package:share_plus/share_plus.dart';
 
 import '../../../core/config/providers.dart';
 import '../../../core/database/dao/payment_dao.dart';
@@ -1070,6 +1072,16 @@ class _PaymentOutFormScreenState extends ConsumerState<PaymentOutFormScreen> {
     }
   }
 
+  void _showSnackBar(String message, {bool isError = false}) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(message),
+        backgroundColor: isError ? Colors.red : Colors.green,
+      ),
+    );
+  }
+
   Future<void> _showPostSaveActions({
     required Company company,
     required PaymentOut payment,
@@ -1105,8 +1117,64 @@ class _PaymentOutFormScreenState extends ConsumerState<PaymentOutFormScreen> {
                     payment: payment,
                     lines: lines,
                     totalAmount: payment.totalAmount,
+                    currencySymbol: _currencySymbol,
                     imagePath: payment.attachmentPath,
                   );
+                },
+              ),
+              ListTile(
+                leading: const Icon(Icons.picture_as_pdf, color: Colors.red),
+                title: const Text('Share as PDF'),
+                onTap: () async {
+                  Navigator.pop(context);
+                  try {
+                    final pdfBytes =
+                        await PaymentOutReceiptGenerator.generateReceiptPdf(
+                      company: company,
+                      supplier: _selectedSupplier!,
+                      payment: payment,
+                      lines: lines,
+                      totalAmount: payment.totalAmount,
+                      currencySymbol: _currencySymbol,
+                      imagePath: payment.attachmentPath,
+                    );
+                    final tempDir = await getTemporaryDirectory();
+                    final file = File(
+                        '${tempDir.path}/payment_out_${payment.voucherNo}.pdf');
+                    await file.writeAsBytes(pdfBytes);
+                    await Share.shareXFiles(
+                      [XFile(file.path)],
+                      subject: 'Payment Out Voucher - ${payment.voucherNo}',
+                    );
+                  } catch (e) {
+                    _showSnackBar('Error sharing PDF: $e', isError: true);
+                  }
+                },
+              ),
+              ListTile(
+                leading: const Icon(Icons.download, color: Colors.teal),
+                title: const Text('Download PDF'),
+                onTap: () async {
+                  Navigator.pop(context);
+                  try {
+                    final pdfBytes =
+                        await PaymentOutReceiptGenerator.generateReceiptPdf(
+                      company: company,
+                      supplier: _selectedSupplier!,
+                      payment: payment,
+                      lines: lines,
+                      totalAmount: payment.totalAmount,
+                      currencySymbol: _currencySymbol,
+                      imagePath: payment.attachmentPath,
+                    );
+                    final dir = await getApplicationDocumentsDirectory();
+                    final fileName = 'payment_out_${payment.voucherNo}.pdf';
+                    final file = File('${dir.path}/$fileName');
+                    await file.writeAsBytes(pdfBytes);
+                    _showSnackBar('PDF saved: ${file.path}');
+                  } catch (e) {
+                    _showSnackBar('Error downloading PDF: $e', isError: true);
+                  }
                 },
               ),
               ListTile(
@@ -1121,6 +1189,7 @@ class _PaymentOutFormScreenState extends ConsumerState<PaymentOutFormScreen> {
                     payment: payment,
                     lines: lines,
                     totalAmount: payment.totalAmount,
+                    currencySymbol: _currencySymbol,
                     imagePath: payment.attachmentPath,
                   );
                   await Printing.layoutPdf(onLayout: (_) async => pdfBytes);
